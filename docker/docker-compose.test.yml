@@ -1,0 +1,46 @@
+services:
+  mongo:
+    image: mongo:7
+    healthcheck:
+      test: ['CMD', 'mongosh', '--eval', "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  vast:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      VAST_SECRET_KEY: ci-test-secret
+      VAST_AUTH_MODE: none
+      VAST_RUNTIME: web
+      VAST_BIND: 0.0.0.0
+      VAST_DATA_DIR: /data
+      VAST_LOG_LEVEL: warn
+    depends_on:
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:8080/api/health']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  e2e:
+    image: mcr.microsoft.com/playwright:v1.51.1-jammy
+    working_dir: /work
+    volumes:
+      - ..:/work
+    environment:
+      VAST_BASE_URL: http://vast:8080
+      VAST_E2E_NO_WEBSERVER: '1'
+      CI: '1'
+    depends_on:
+      vast:
+        condition: service_healthy
+    command: >
+      bash -lc "corepack enable &&
+      corepack prepare pnpm@11.18.0 --activate &&
+      pnpm install --frozen-lockfile || pnpm install &&
+      pnpm --filter @vast/e2e test"

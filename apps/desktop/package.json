@@ -1,0 +1,12 @@
+{
+  "name": "@vast/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tauri 2 desktop shell for Vast (sidecar wiring in Phase 7)",
+  "scripts": {
+    "dev": "echo 'Tauri desktop scaffold — run full setup in Phase 7: see docs/DESKTOP.md'",
+    "build": "echo 'Desktop build not yet wired; see docs/DESKTOP.md'",
+    "typecheck": "echo 'ok'",
+    "lint": "echo 'ok'"
+  }
+}

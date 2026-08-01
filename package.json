@@ -1,0 +1,35 @@
+{
+  "name": "vast",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vast — MongoDB workbench for browser and desktop",
+  "packageManager": "pnpm@11.18.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "predev": "pnpm --filter @vast/shared build && pnpm --filter @vast/mongo-core build",
+    "dev": "pnpm --parallel --filter @vast/server --filter @vast/web dev",
+    "dev:server": "pnpm --filter @vast/shared build && pnpm --filter @vast/mongo-core build && pnpm --filter @vast/server dev",
+    "dev:web": "pnpm --filter @vast/web dev",
+    "build": "pnpm --filter @vast/shared build && pnpm --filter @vast/mongo-core build && pnpm --filter @vast/test-utils build && pnpm --filter @vast/web build && pnpm --filter @vast/server build",
+    "build:web": "pnpm --filter @vast/web build",
+    "build:server": "pnpm --filter @vast/server build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r --filter=./packages/* test",
+    "test:unit": "pnpm --filter @vast/shared test && pnpm --filter @vast/mongo-core test",
+    "test:integration": "MONGO_URI=${MONGO_URI:-mongodb://127.0.0.1:27027} pnpm --filter @vast/server test",
+    "test:e2e": "MONGO_URI=${MONGO_URI:-mongodb://127.0.0.1:27027} pnpm --filter @vast/e2e test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "docker:up": "docker compose -f docker/docker-compose.yml up --build",
+    "docker:down": "docker compose -f docker/docker-compose.yml down",
+    "docker:test": "docker compose -f docker/docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from e2e"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.2"
+  }
+}

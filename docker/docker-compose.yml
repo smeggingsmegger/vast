@@ -1,0 +1,35 @@
+services:
+  mongo:
+    image: mongo:7
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ['CMD', 'mongosh', '--eval', "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  vast:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - '8080:8080'
+    environment:
+      VAST_SECRET_KEY: dev-secret-change-me
+      VAST_AUTH_MODE: none
+      VAST_RUNTIME: web
+      VAST_BIND: 0.0.0.0
+      VAST_DATA_DIR: /data
+      VAST_LOG_LEVEL: info
+    volumes:
+      - vast-data:/data
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+volumes:
+  mongo-data:
+  vast-data:

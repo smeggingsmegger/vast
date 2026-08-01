@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build
+dist/
+build/
+*.tsbuildinfo
+apps/web/dist/
+apps/server/dist/
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/binaries/
+
+# Data / runtime
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+
+# Test / coverage
+coverage/
+playwright-report/
+test-results/
+blob-report/
+.nyc_output/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+pnpm-debug.log*
+
+# Docker
+docker/data/
+
+# Misc
+.turbo/
+*.local

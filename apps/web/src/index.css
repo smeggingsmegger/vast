@@ -1,0 +1,65 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --color-background: #09090b;
+  --color-foreground: #fafafa;
+  --color-card: #0c0c0f;
+  --color-card-hover: #121216;
+  --color-border: #27272a;
+  --color-muted: #a1a1aa;
+  --color-muted-fg: #71717a;
+  --color-accent: #2dd4bf;
+  --color-accent-fg: #042f2e;
+  --color-accent-soft: color-mix(in oklab, #2dd4bf 15%, transparent);
+  --color-danger: #f87171;
+  --color-warning: #fbbf24;
+  --color-success: #34d399;
+  --color-sidebar: #0a0a0c;
+  --color-input: #18181b;
+  --color-ring: #2dd4bf;
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html.light {
+    --color-background: #fafafa;
+    --color-foreground: #09090b;
+    --color-card: #ffffff;
+    --color-card-hover: #f4f4f5;
+    --color-border: #e4e4e7;
+    --color-muted: #52525b;
+    --color-muted-fg: #71717a;
+    --color-accent: #0d9488;
+    --color-accent-fg: #f0fdfa;
+    --color-accent-soft: color-mix(in oklab, #0d9488 12%, transparent);
+    --color-sidebar: #f4f4f5;
+    --color-input: #ffffff;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+  }
+
+  ::selection {
+    background: var(--color-accent-soft);
+  }
+}
+
+@layer utilities {
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+}

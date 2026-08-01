@@ -1,0 +1,32 @@
+{
+  "name": "@vast/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:integration": "vitest run src/integration.mongo.test.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.1",
+    "@vast/mongo-core": "workspace:*",
+    "@vast/shared": "workspace:*",
+    "hono": "^4.7.5",
+    "mongodb": "^6.15.0",
+    "pino": "^9.6.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.3",
+    "vitest": "^3.0.9"
+  }
+}
