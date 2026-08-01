@@ -6,6 +6,7 @@ import {
   CreateCollectionBodySchema,
   CreateDatabaseBodySchema,
   CreateIndexBodySchema,
+  DeleteByFilterBodySchema,
   DropConfirmSchema,
   DumpBodySchema,
   ErrorCode,
@@ -15,9 +16,11 @@ import {
   InsertManyBodySchema,
   InsertOneBodySchema,
   PatchBodySchema,
+  PreviewBodySchema,
   ReplaceBodySchema,
   RestoreBodySchema,
   SchemaAnalyzeBodySchema,
+  UpdateByFilterBodySchema,
   VastError,
 } from '@vast/shared';
 import {
@@ -167,6 +170,60 @@ export function mongoRoutes(ctx: AppContext) {
     const col = client.db(c.req.param('db')).collection(c.req.param('col'));
     const count = await new DocumentService(col).count(body.filter, body.maxTimeMS);
     return c.json({ data: { count } });
+  });
+
+  /** Dry-run: matchCount + sample docs (safe for any filter). */
+  r.post('/c/:cid/db/:db/col/:col/preview', async (c) => {
+    const body = PreviewBodySchema.parse(await c.req.json().catch(() => ({})));
+    const { client } = requireConn(ctx, c.req.param('cid'));
+    const col = client.db(c.req.param('db')).collection(c.req.param('col'));
+    const data = await new DocumentService(col).preview(body.filter, {
+      sampleSize: body.sampleSize,
+      maxTimeMS: body.maxTimeMS,
+    });
+    return c.json({ data });
+  });
+
+  r.post('/c/:cid/db/:db/col/:col/update-one', async (c) => {
+    const cid = c.req.param('cid');
+    requireWritable(ctx, cid);
+    const body = UpdateByFilterBodySchema.parse(await c.req.json());
+    const { client } = requireConn(ctx, cid);
+    const col = client.db(c.req.param('db')).collection(c.req.param('col'));
+    const data = await new DocumentService(col).updateOneByFilter(body.filter, body.update, {
+      upsert: body.upsert,
+    });
+    return c.json({ data });
+  });
+
+  r.post('/c/:cid/db/:db/col/:col/update-many', async (c) => {
+    const cid = c.req.param('cid');
+    requireWritable(ctx, cid);
+    const body = UpdateByFilterBodySchema.parse(await c.req.json());
+    const { client } = requireConn(ctx, cid);
+    const col = client.db(c.req.param('db')).collection(c.req.param('col'));
+    const data = await new DocumentService(col).updateManyByFilter(body.filter, body.update);
+    return c.json({ data });
+  });
+
+  r.post('/c/:cid/db/:db/col/:col/delete-one', async (c) => {
+    const cid = c.req.param('cid');
+    requireWritable(ctx, cid);
+    const body = DeleteByFilterBodySchema.parse(await c.req.json());
+    const { client } = requireConn(ctx, cid);
+    const col = client.db(c.req.param('db')).collection(c.req.param('col'));
+    const data = await new DocumentService(col).deleteOneByFilter(body.filter);
+    return c.json({ data });
+  });
+
+  r.post('/c/:cid/db/:db/col/:col/delete-many', async (c) => {
+    const cid = c.req.param('cid');
+    requireWritable(ctx, cid);
+    const body = DeleteByFilterBodySchema.parse(await c.req.json());
+    const { client } = requireConn(ctx, cid);
+    const col = client.db(c.req.param('db')).collection(c.req.param('col'));
+    const data = await new DocumentService(col).deleteMany(body.filter);
+    return c.json({ data });
   });
 
   r.post('/c/:cid/db/:db/col/:col/documents', async (c) => {

@@ -193,14 +193,112 @@ export class DocumentService {
     return { deleted: result.deletedCount === 1 };
   }
 
-  async deleteMany(filterEjson: unknown): Promise<{ deletedCount: number }> {
+  async deleteOneByFilter(filterEjson: unknown): Promise<{
+    deletedCount: number;
+    matchedCount: number;
+  }> {
+    const filter = parseFilter(filterEjson);
+    if (!filter || Object.keys(filter).length === 0) {
+      throw new VastError(ErrorCode.VALIDATION, 'deleteOne requires a non-empty filter');
+    }
+    const matchedCount = await this.collection.countDocuments(filter, { limit: 1 });
+    const result = await this.collection.deleteOne(filter);
+    return { deletedCount: result.deletedCount, matchedCount };
+  }
+
+  async deleteMany(filterEjson: unknown): Promise<{ deletedCount: number; matchedCount: number }> {
     const filter = parseFilter(filterEjson);
     if (!filter || Object.keys(filter).length === 0) {
       throw new VastError(ErrorCode.VALIDATION, 'deleteMany requires a non-empty filter');
     }
+    const matchedCount = await this.collection.countDocuments(filter);
     const result = await this.collection.deleteMany(filter);
-    return { deletedCount: result.deletedCount };
+    return { deletedCount: result.deletedCount, matchedCount };
   }
+
+  async updateOneByFilter(
+    filterEjson: unknown,
+    updateEjson: unknown,
+    options?: { upsert?: boolean },
+  ): Promise<{ matchedCount: number; modifiedCount: number; upsertedCount: number }> {
+    const filter = parseFilter(filterEjson);
+    const update = fromEJSON(updateEjson) as Document;
+    assertUpdateDoc(update);
+    const result = await this.collection.updateOne(filter, update, {
+      upsert: options?.upsert ?? false,
+    });
+    return {
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
+      upsertedCount: result.upsertedCount ?? 0,
+    };
+  }
+
+  async updateManyByFilter(
+    filterEjson: unknown,
+    updateEjson: unknown,
+  ): Promise<{ matchedCount: number; modifiedCount: number }> {
+    const filter = parseFilter(filterEjson);
+    if (!filter || Object.keys(filter).length === 0) {
+      throw new VastError(
+        ErrorCode.VALIDATION,
+        'updateMany requires a non-empty filter (refusing to update entire collection)',
+      );
+    }
+    const update = fromEJSON(updateEjson) as Document;
+    assertUpdateDoc(update);
+    const result = await this.collection.updateMany(filter, update);
+    return {
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
+    };
+  }
+
+  /**
+   * Dry-run style preview: how many docs match + a small sample.
+   * Used before write ops and to enrich find result summaries.
+   */
+  async preview(
+    filterEjson: unknown,
+    options?: { sampleSize?: number; maxTimeMS?: number },
+  ): Promise<{
+    matchCount: number;
+    sample: unknown[];
+    sampleSize: number;
+    executionMs: number;
+  }> {
+    const filter = parseFilter(filterEjson);
+    const sampleSize = clamp(options?.sampleSize ?? 5, 1, 20);
+    const maxTimeMS = options?.maxTimeMS ?? 30_000;
+    const started = Date.now();
+    const [matchCount, sampleDocs] = await Promise.all([
+      this.collection.countDocuments(filter, { maxTimeMS }),
+      this.collection.find(filter, { limit: sampleSize, maxTimeMS }).toArray(),
+    ]);
+    return {
+      matchCount,
+      sample: sampleDocs.map((d) => toEJSON(d)),
+      sampleSize,
+      executionMs: Date.now() - started,
+    };
+  }
+}
+
+function assertUpdateDoc(update: Document): void {
+  const keys = Object.keys(update);
+  if (!keys.length) {
+    throw new VastError(ErrorCode.VALIDATION, 'Update document is empty');
+  }
+  const hasOperator = keys.some((k) => k.startsWith('$'));
+  const hasNonOperator = keys.some((k) => !k.startsWith('$'));
+  if (hasOperator && hasNonOperator) {
+    throw new VastError(
+      ErrorCode.VALIDATION,
+      'Update cannot mix operator and non-operator fields',
+    );
+  }
+  // Replacement-style updates (no $) are allowed for updateOne only in Mongo; we allow both
+  // but require at least one field.
 }
 
 function parseFilter(filter: unknown): Filter<Document> {

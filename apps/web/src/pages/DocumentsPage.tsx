@@ -23,7 +23,6 @@ import {
   Upload,
   Braces,
   ListTree,
-  Filter,
   Bookmark,
   Pencil,
   Copy,
@@ -39,6 +38,21 @@ import {
   type FieldEditPayload,
 } from '@/components/documents/FieldEditDialog';
 import {
+  QueryEditor,
+  type RunAggregatePayload,
+  type RunFindPayload,
+  type RunScriptPayload,
+} from '@/components/documents/QueryEditor';
+import {
+  QueryResultPanel,
+  type QueryResultSummary,
+} from '@/components/documents/QueryResultPanel';
+import {
+  defaultFindScript,
+  filterFromParsed,
+  isWriteOp,
+} from '@/lib/query-script';
+import {
   clampColumnWidth,
   DEFAULT_COLUMN_WIDTH,
   deleteSavedView,
@@ -53,6 +67,7 @@ import {
   type SortDirection,
 } from '@/lib/collection-views';
 import { copyText, valueAsMongoShell, valueAsString } from '@/lib/copy-value';
+import { useTabsStore } from '@/stores/tabs';
 import { cn } from '@/lib/utils';
 
 const TYPE_TONES: Record<string, string> = {
@@ -113,31 +128,43 @@ export function DocumentsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = (searchParams.get('tab') as Tab) || 'documents';
   const setTab = (t: Tab) => setSearchParams({ tab: t });
+  const openTab = useTabsStore((s) => s.openTab);
+
+  const connections = useQuery({
+    queryKey: ['connections'],
+    queryFn: async () => (await api.listConnections()).data,
+    staleTime: 30_000,
+  });
+  const connectionName = connections.data?.find((c) => c.id === cid)?.name;
+
+  // Keep collection open in the tab strip
+  useEffect(() => {
+    if (!cid || !db || !col) return;
+    openTab({ cid, db, col, connectionName });
+  }, [cid, db, col, connectionName, openTab]);
 
   return (
     <DocumentsErrorBoundary>
     <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-[var(--color-border)] px-4 py-3 md:px-6">
-        <div className="mb-2 flex flex-wrap items-center gap-1 text-xs text-[var(--color-muted-fg)]">
-          <Link to="/" className="hover:text-[var(--color-foreground)]">
-            Connections
-          </Link>
-          <ChevronRight className="h-3 w-3" />
-          <Link to={`/c/${cid}`} className="hover:text-[var(--color-foreground)]">
-            Connection
-          </Link>
-          <ChevronRight className="h-3 w-3" />
-          <Link
-            to={`/c/${cid}/db/${encodeURIComponent(db)}`}
-            className="hover:text-[var(--color-foreground)]"
-          >
-            {db}
-          </Link>
-          <ChevronRight className="h-3 w-3" />
-          <span className="text-[var(--color-foreground)]">{col}</span>
-        </div>
+      <div className="shrink-0 border-b border-[var(--color-border)] px-4 py-2 md:px-6">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h1 className="text-xl font-semibold tracking-tight">{col}</h1>
+          <div className="min-w-0">
+            <div className="mb-0.5 flex flex-wrap items-center gap-1 text-xs text-[var(--color-muted-fg)]">
+              <Link to={`/c/${cid}`} className="hover:text-[var(--color-foreground)]">
+                {connectionName ?? 'Connection'}
+              </Link>
+              <ChevronRight className="h-3 w-3" />
+              <Link
+                to={`/c/${cid}/db/${encodeURIComponent(db)}`}
+                className="hover:text-[var(--color-foreground)]"
+              >
+                {db}
+              </Link>
+              <ChevronRight className="h-3 w-3" />
+              <span className="font-mono text-[var(--color-foreground)]">{col}</span>
+            </div>
+            <h1 className="truncate text-lg font-semibold tracking-tight">{col}</h1>
+          </div>
           <nav className="flex flex-wrap gap-1">
             {(
               [
@@ -168,7 +195,19 @@ export function DocumentsPage() {
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {tab === 'documents' && (
           <div className="flex h-0 min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            <DocumentsPanel cid={cid} db={db} col={col} />
+            <DocumentsPanel
+              cid={cid}
+              db={db}
+              col={col}
+              onOpenAggregate={(pipelineJson) => {
+                try {
+                  sessionStorage.setItem(`vast-agg:${cid}:${db}:${col}`, pipelineJson);
+                } catch {
+                  // ignore
+                }
+                setTab('aggregate');
+              }}
+            />
           </div>
         )}
         {tab === 'indexes' && (
@@ -197,12 +236,32 @@ export function DocumentsPage() {
   );
 }
 
-function DocumentsPanel({ cid, db, col }: { cid: string; db: string; col: string }) {
+function DocumentsPanel({
+  cid,
+  db,
+  col,
+  onOpenAggregate,
+}: {
+  cid: string;
+  db: string;
+  col: string;
+  onOpenAggregate?: (pipelineJson: string) => void;
+}) {
   const qc = useQueryClient();
+  const [script, setScript] = useState(() => defaultFindScript(col));
   const [filterText, setFilterText] = useState('{}');
   const [appliedFilter, setAppliedFilter] = useState<unknown>({});
+  const [appliedProjection, setAppliedProjection] = useState<
+    Record<string, 0 | 1> | undefined
+  >();
+  const [appliedSort, setAppliedSort] = useState<Record<string, 1 | -1> | undefined>({
+    _id: -1,
+  });
   const [skip, setSkip] = useState(0);
-  const limit = 50;
+  const [limit, setLimit] = useState(50);
+  const [queryResult, setQueryResult] = useState<QueryResultSummary | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [runningScript, setRunningScript] = useState(false);
   const [selected, setSelected] = useState<Record<string, unknown> | null>(null);
   const [editMode, setEditMode] = useState<'tree' | 'json'>('json');
   const [jsonText, setJsonText] = useState('');
@@ -210,15 +269,14 @@ function DocumentsPanel({ cid, db, col }: { cid: string; db: string; col: string
   const [insertText, setInsertText] = useState('{\n  \n}');
   const [convertPath, setConvertPath] = useState<string | null>(null);
   const [convertType, setConvertType] = useState('string');
-  const [fieldFilter, setFieldFilter] = useState({ field: '', op: 'eq', value: '' });
   const [fieldEdit, setFieldEdit] = useState<{ path: string; value: unknown } | null>(null);
 
   // Column / sort / views
   const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
   const [visibleColumns, setVisibleColumns] = useState<string[] | null>(null);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
-  const [sortField, setSortField] = useState<string | null>(null);
-  const [sortDir, setSortDir] = useState<SortDirection>(1);
+  const [sortField, setSortField] = useState<string | null>('_id');
+  const [sortDir, setSortDir] = useState<SortDirection>(-1);
   const [showColumnsMenu, setShowColumnsMenu] = useState(false);
   const [showViewsMenu, setShowViewsMenu] = useState(false);
   const [savedViews, setSavedViews] = useState<SavedCollectionView[]>([]);
@@ -240,12 +298,21 @@ function DocumentsPanel({ cid, db, col }: { cid: string; db: string; col: string
     setHiddenColumns([]);
     setVisibleColumns(null);
     setColumnWidths({});
-    setSortField(null);
-    setSortDir(1);
+    setSortField('_id');
+    setSortDir(-1);
     setActiveViewId(null);
     setShowColumnsMenu(false);
     setShowViewsMenu(false);
     setContextMenu(null);
+    setScript(defaultFindScript(col));
+    setFilterText('{}');
+    setAppliedFilter({});
+    setAppliedProjection(undefined);
+    setAppliedSort({ _id: -1 });
+    setSkip(0);
+    setLimit(50);
+    setQueryResult(null);
+    setSelected(null);
   }, [cid, db, col]);
 
   // Close context menu on escape / scroll
@@ -259,13 +326,24 @@ function DocumentsPanel({ cid, db, col }: { cid: string; db: string; col: string
   }, [contextMenu]);
 
   const docs = useQuery({
-    queryKey: ['docs', cid, db, col, appliedFilter, skip, limit, sortField, sortDir],
+    queryKey: [
+      'docs',
+      cid,
+      db,
+      col,
+      appliedFilter,
+      appliedProjection,
+      appliedSort,
+      skip,
+      limit,
+    ],
     queryFn: () =>
       api.find(cid, db, col, {
         filter: appliedFilter,
+        projection: appliedProjection,
         skip,
-        limit,
-        sort: sortToApi(sortField, sortDir),
+        limit: Math.min(Math.max(limit || 50, 1), 1000),
+        sort: appliedSort,
       }),
   });
 
@@ -306,6 +384,7 @@ function DocumentsPanel({ cid, db, col }: { cid: string; db: string; col: string
     setColumnWidths(state.columnWidths ?? {});
     setSortField(state.sortField);
     setSortDir(state.sortDir ?? 1);
+    setAppliedSort(sortToApi(state.sortField, state.sortDir ?? 1));
     setFilterText(state.filterJson ?? '{}');
     try {
       setAppliedFilter(JSON.parse(state.filterJson || '{}'));
@@ -354,32 +433,327 @@ function DocumentsPanel({ cid, db, col }: { cid: string; db: string; col: string
     setSavedViews(store.views);
   }
 
-  function applyFilter() {
-    try {
-      const parsed = JSON.parse(filterText || '{}');
-      setAppliedFilter(parsed);
-      setSkip(0);
-      setActiveViewId(null);
-    } catch {
-      toast.error('Invalid filter JSON');
+  async function handleRunFind(payload: RunFindPayload) {
+    setActiveViewId(null);
+    if (payload.kind === 'count') {
+      try {
+        const started = Date.now();
+        const res = await api.count(cid, db, col, payload.filter);
+        setQueryResult({
+          kind: 'count',
+          op: 'countDocuments',
+          title: `${res.data.count.toLocaleString()} document${res.data.count === 1 ? '' : 's'} match`,
+          stats: [{ label: 'count', value: res.data.count, tone: 'accent' }],
+          matchCount: res.data.count,
+          executionMs: Date.now() - started,
+        });
+        toast.success(`Count: ${res.data.count}`);
+      } catch (e) {
+        setQueryResult({
+          kind: 'error',
+          op: 'countDocuments',
+          title: e instanceof Error ? e.message : 'Count failed',
+        });
+        toast.error(e instanceof Error ? e.message : 'Count failed');
+      }
+      return;
+    }
+    setAppliedFilter(payload.filter ?? {});
+    setFilterText(JSON.stringify(payload.filter ?? {}, null, 2));
+    setAppliedProjection(
+      payload.projection && Object.keys(payload.projection).length
+        ? payload.projection
+        : undefined,
+    );
+    if (payload.sort && Object.keys(payload.sort).length > 0) {
+      setAppliedSort(payload.sort);
+      const [field, dir] = Object.entries(payload.sort)[0];
+      setSortField(field);
+      setSortDir(dir === -1 ? -1 : 1);
+    } else {
+      setAppliedSort(undefined);
+      setSortField(null);
+      setSortDir(1);
+    }
+    setSkip(payload.skip ?? 0);
+    if (payload.kind === 'findOne') {
+      setLimit(1);
+    } else {
+      const lim = payload.limit && payload.limit > 0 ? payload.limit : 50;
+      setLimit(Math.min(lim, 1000));
+    }
+    // Enrich with total match count in background
+    void (async () => {
+      try {
+        const [countRes, previewRes] = await Promise.all([
+          api.count(cid, db, col, payload.filter),
+          api.preview(cid, db, col, { filter: payload.filter, sampleSize: 5 }),
+        ]);
+        setQueryResult({
+          kind: 'find',
+          op: payload.kind,
+          title:
+            payload.kind === 'findOne'
+              ? 'findOne — loading into grid'
+              : `Find results in grid below`,
+          details: [
+            `${countRes.data.count.toLocaleString()} total match${countRes.data.count === 1 ? '' : 'es'} (before skip/limit)`,
+          ],
+          stats: [
+            { label: 'matched', value: countRes.data.count, tone: 'accent' },
+            {
+              label: 'page limit',
+              value: payload.kind === 'findOne' ? 1 : payload.limit && payload.limit > 0 ? payload.limit : 50,
+            },
+          ],
+          matchCount: countRes.data.count,
+          sample: previewRes.data.sample,
+          executionMs: previewRes.data.executionMs,
+        });
+      } catch {
+        setQueryResult({
+          kind: 'find',
+          op: payload.kind,
+          title: 'Query running — results in grid',
+        });
+      }
+    })();
+  }
+
+  function handleRunAggregate(payload: RunAggregatePayload) {
+    const json = JSON.stringify(payload.pipeline, null, 2);
+    if (onOpenAggregate) {
+      onOpenAggregate(json);
+      toast.message('Opened Aggregate tab with pipeline from script');
+    } else {
+      toast.message('Switch to the Aggregate tab to run pipelines');
     }
   }
 
-  function applyFieldFilter() {
-    if (!fieldFilter.field) return;
-    let value: unknown = fieldFilter.value;
-    if (fieldFilter.value === 'true') value = true;
-    else if (fieldFilter.value === 'false') value = false;
-    else if (fieldFilter.value === 'null') value = null;
-    else if (/^-?\d+(\.\d+)?$/.test(fieldFilter.value)) value = Number(fieldFilter.value);
-    const filter =
-      fieldFilter.op === 'eq'
-        ? { [fieldFilter.field]: value }
-        : { [fieldFilter.field]: { [`$${fieldFilter.op}`]: value } };
-    setFilterText(JSON.stringify(filter, null, 2));
-    setAppliedFilter(filter);
-    setSkip(0);
-    setActiveViewId(null);
+  async function handlePreviewScript(parsed: RunScriptPayload) {
+    const filter = filterFromParsed(parsed);
+    if (filter === null) {
+      toast.message('This operation has no filter to preview');
+      return;
+    }
+    setPreviewing(true);
+    try {
+      const res = await api.preview(cid, db, col, { filter, sampleSize: 8 });
+      const n = res.data.matchCount;
+      const write = isWriteOp(parsed.kind);
+      setQueryResult({
+        kind: 'preview',
+        op: parsed.kind,
+        title: write
+          ? `Would affect ${n.toLocaleString()} document${n === 1 ? '' : 's'}`
+          : `${n.toLocaleString()} document${n === 1 ? '' : 's'} match this filter`,
+        details: write
+          ? [
+              'This is a dry-run — nothing was changed.',
+              parsed.kind.startsWith('update')
+                ? 'Execute to apply the update to matching documents.'
+                : 'Execute to delete matching documents.',
+              parsed.kind === 'updateOne' || parsed.kind === 'deleteOne'
+                ? 'Note: updateOne/deleteOne only touches the first match.'
+                : '',
+            ].filter(Boolean)
+          : ['Preview only — use Run to load results into the grid.'],
+        stats: [
+          { label: 'would match', value: n, tone: n > 0 ? 'accent' : 'warning' },
+          ...(parsed.kind === 'updateOne' || parsed.kind === 'deleteOne'
+            ? [{ label: 'op limit', value: 1, tone: 'default' as const }]
+            : []),
+        ],
+        matchCount: n,
+        sample: res.data.sample,
+        executionMs: res.data.executionMs,
+        isDryRun: true,
+      });
+      if (n === 0) toast.message('No documents match');
+      else toast.message(`${n} would match`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Preview failed';
+      setQueryResult({ kind: 'error', op: parsed.kind, title: msg });
+      toast.error(msg);
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
+  async function handleRunScript(parsed: RunScriptPayload) {
+    if (parsed.kind === 'find' || parsed.kind === 'findOne' || parsed.kind === 'count') {
+      await handleRunFind({
+        kind: parsed.kind,
+        filter: parsed.filter,
+        projection: parsed.projection,
+        sort: parsed.sort,
+        skip: parsed.skip,
+        limit: parsed.kind === 'findOne' ? 1 : parsed.limit,
+      });
+      return;
+    }
+    if (parsed.kind === 'aggregate') {
+      handleRunAggregate({ kind: 'aggregate', pipeline: parsed.pipeline });
+      return;
+    }
+
+    // Writes: confirm with match count first
+    setRunningScript(true);
+    try {
+      if (
+        parsed.kind === 'updateOne' ||
+        parsed.kind === 'updateMany' ||
+        parsed.kind === 'deleteOne' ||
+        parsed.kind === 'deleteMany'
+      ) {
+        const preview = await api.preview(cid, db, col, {
+          filter: parsed.filter,
+          sampleSize: 5,
+        });
+        const n = preview.data.matchCount;
+        const oneOnly = parsed.kind === 'updateOne' || parsed.kind === 'deleteOne';
+        const affect = oneOnly ? Math.min(1, n) : n;
+        if (n === 0) {
+          setQueryResult({
+            kind: 'preview',
+            op: parsed.kind,
+            title: 'No documents match — nothing to do',
+            stats: [{ label: 'matched', value: 0, tone: 'warning' }],
+            matchCount: 0,
+            sample: [],
+            isDryRun: true,
+            executionMs: preview.data.executionMs,
+          });
+          toast.message('No matches');
+          return;
+        }
+        const verb =
+          parsed.kind === 'updateOne' || parsed.kind === 'updateMany' ? 'update' : 'delete';
+        const ok = window.confirm(
+          `About to ${verb} ${affect.toLocaleString()} document${affect === 1 ? '' : 's'}` +
+            (oneOnly && n > 1 ? ` (first of ${n.toLocaleString()} matches)` : '') +
+            `.\n\nThis cannot be undone from Vast. Continue?`,
+        );
+        if (!ok) {
+          setQueryResult({
+            kind: 'preview',
+            op: parsed.kind,
+            title: `Cancelled — would have affected ${affect.toLocaleString()}`,
+            stats: [{ label: 'would match', value: n, tone: 'accent' }],
+            matchCount: n,
+            sample: preview.data.sample,
+            isDryRun: true,
+            executionMs: preview.data.executionMs,
+          });
+          return;
+        }
+
+        if (parsed.kind === 'updateOne') {
+          const res = await api.updateOneByFilter(cid, db, col, {
+            filter: parsed.filter,
+            update: parsed.update,
+            upsert: parsed.upsert,
+          });
+          setQueryResult({
+            kind: 'write',
+            op: 'updateOne',
+            title: `Updated ${res.data.modifiedCount} document${res.data.modifiedCount === 1 ? '' : 's'}`,
+            stats: [
+              { label: 'matched', value: res.data.matchedCount, tone: 'accent' },
+              { label: 'modified', value: res.data.modifiedCount, tone: 'success' },
+              ...(res.data.upsertedCount
+                ? [{ label: 'upserted', value: res.data.upsertedCount, tone: 'success' as const }]
+                : []),
+            ],
+            sample: preview.data.sample,
+          });
+          toast.success(
+            `matched ${res.data.matchedCount}, modified ${res.data.modifiedCount}`,
+          );
+        } else if (parsed.kind === 'updateMany') {
+          const res = await api.updateManyByFilter(cid, db, col, {
+            filter: parsed.filter,
+            update: parsed.update,
+          });
+          setQueryResult({
+            kind: 'write',
+            op: 'updateMany',
+            title: `Modified ${res.data.modifiedCount.toLocaleString()} of ${res.data.matchedCount.toLocaleString()} matched`,
+            stats: [
+              { label: 'matched', value: res.data.matchedCount, tone: 'accent' },
+              { label: 'modified', value: res.data.modifiedCount, tone: 'success' },
+            ],
+            sample: preview.data.sample,
+          });
+          toast.success(
+            `matched ${res.data.matchedCount}, modified ${res.data.modifiedCount}`,
+          );
+        } else if (parsed.kind === 'deleteOne') {
+          const res = await api.deleteOneByFilter(cid, db, col, parsed.filter);
+          setQueryResult({
+            kind: 'write',
+            op: 'deleteOne',
+            title: res.data.deletedCount
+              ? 'Deleted 1 document'
+              : 'No document deleted',
+            stats: [
+              { label: 'matched', value: res.data.matchedCount, tone: 'accent' },
+              { label: 'deleted', value: res.data.deletedCount, tone: 'danger' },
+            ],
+          });
+          toast.success(`deleted ${res.data.deletedCount}`);
+        } else if (parsed.kind === 'deleteMany') {
+          const res = await api.deleteManyByFilter(cid, db, col, parsed.filter);
+          setQueryResult({
+            kind: 'write',
+            op: 'deleteMany',
+            title: `Deleted ${res.data.deletedCount.toLocaleString()} document${res.data.deletedCount === 1 ? '' : 's'}`,
+            stats: [
+              { label: 'matched', value: res.data.matchedCount, tone: 'accent' },
+              { label: 'deleted', value: res.data.deletedCount, tone: 'danger' },
+            ],
+          });
+          toast.success(`deleted ${res.data.deletedCount}`);
+        }
+        void qc.invalidateQueries({ queryKey: ['docs', cid, db, col] });
+        return;
+      }
+
+      if (parsed.kind === 'insertOne') {
+        const res = await api.insertDocument(cid, db, col, parsed.document);
+        setQueryResult({
+          kind: 'write',
+          op: 'insertOne',
+          title: 'Inserted 1 document',
+          stats: [{ label: 'inserted', value: 1, tone: 'success' }],
+          sample: [res.data as Record<string, unknown>],
+        });
+        toast.success('Inserted');
+        void qc.invalidateQueries({ queryKey: ['docs', cid, db, col] });
+        return;
+      }
+
+      if (parsed.kind === 'insertMany') {
+        const res = await api.insertMany(cid, db, col, parsed.documents);
+        setQueryResult({
+          kind: 'write',
+          op: 'insertMany',
+          title: `Inserted ${res.data.insertedCount} document${res.data.insertedCount === 1 ? '' : 's'}`,
+          stats: [{ label: 'inserted', value: res.data.insertedCount, tone: 'success' }],
+        });
+        toast.success(`Inserted ${res.data.insertedCount}`);
+        void qc.invalidateQueries({ queryKey: ['docs', cid, db, col] });
+        return;
+      }
+
+      toast.error('Unsupported operation');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Operation failed';
+      setQueryResult({ kind: 'error', op: parsed.kind, title: msg });
+      toast.error(msg);
+    } finally {
+      setRunningScript(false);
+    }
   }
 
   function toggleColumn(field: string) {
@@ -401,6 +775,7 @@ function DocumentsPanel({ cid, db, col }: { cid: string; db: string; col: string
     const next = nextSortState(sortField, sortDir, field);
     setSortField(next.sortField);
     setSortDir(next.sortDir);
+    setAppliedSort(sortToApi(next.sortField, next.sortDir));
     setSkip(0);
     setActiveViewId(null);
   }
@@ -534,60 +909,21 @@ function DocumentsPanel({ cid, db, col }: { cid: string; db: string; col: string
       {/* Left: toolbar + grid. Column mode: h-0+flex-1 caps height. Row mode: stretch via min-h-0. */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r border-[var(--color-border)]">
         <div className="shrink-0 space-y-2 border-b border-[var(--color-border)] p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <Filter className="h-4 w-4 text-[var(--color-muted)]" />
-            <Input
-              className="max-w-[120px]"
-              placeholder="field"
-              value={fieldFilter.field}
-              onChange={(e) => setFieldFilter((f) => ({ ...f, field: e.target.value }))}
-            />
-            <select
-              className="h-9 rounded-lg border border-[var(--color-border)] bg-[var(--color-input)] px-2 text-sm"
-              value={fieldFilter.op}
-              onChange={(e) => setFieldFilter((f) => ({ ...f, op: e.target.value }))}
-            >
-              <option value="eq">equals</option>
-              <option value="ne">≠</option>
-              <option value="gt">&gt;</option>
-              <option value="gte">≥</option>
-              <option value="lt">&lt;</option>
-              <option value="lte">≤</option>
-              <option value="regex">regex</option>
-            </select>
-            <Input
-              className="max-w-[140px]"
-              placeholder="value"
-              value={fieldFilter.value}
-              onChange={(e) => setFieldFilter((f) => ({ ...f, value: e.target.value }))}
-            />
-            <Button size="sm" variant="secondary" onClick={applyFieldFilter}>
-              Apply
-            </Button>
-          </div>
-          <div className="flex gap-2">
-            <textarea
-              className="min-h-[56px] flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-input)] p-2 font-mono text-xs"
-              value={filterText}
-              onChange={(e) => setFilterText(e.target.value)}
-              spellCheck={false}
-              aria-label="JSON filter"
-            />
-            <div className="flex flex-col gap-1">
-              <Button size="sm" onClick={applyFilter}>
-                Run
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  void docs.refetch();
-                }}
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          </div>
+          <QueryEditor
+            cid={cid}
+            db={db}
+            col={col}
+            script={script}
+            onScriptChange={setScript}
+            onRunFind={(p) => void handleRunFind(p)}
+            onRunAggregate={handleRunAggregate}
+            onRunScript={(p) => void handleRunScript(p)}
+            onPreviewScript={(p) => void handlePreviewScript(p)}
+            running={docs.isFetching || runningScript}
+            previewing={previewing}
+            fieldSuggestions={allColumns}
+          />
+          <QueryResultPanel result={queryResult} />
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" onClick={() => setShowInsert(true)}>
               <Plus className="h-3.5 w-3.5" />
@@ -723,12 +1059,27 @@ function DocumentsPanel({ cid, db, col }: { cid: string; db: string; col: string
             </div>
             {docs.data && (
               <span className="font-mono text-[11px] text-[var(--color-muted-fg)]">
-                {docs.data.page.returned} rows · {docs.data.page.executionMs}ms
+                showing {docs.data.page.returned}
+                {queryResult?.matchCount != null
+                  ? ` of ${queryResult.matchCount.toLocaleString()} matched`
+                  : ' rows'}
+                {' · '}
+                {docs.data.page.executionMs}ms
                 {docs.data.page.hasMore ? ' · more…' : ''}
                 {sortField && ` · sort ${sortField}${sortDir === -1 ? ' desc' : ' asc'}`}
               </span>
             )}
             <div className="flex-1" />
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                void docs.refetch();
+              }}
+              title="Refresh"
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', docs.isFetching && 'animate-spin')} />
+            </Button>
             <Button size="sm" variant="ghost" disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - limit))}>
               Prev
             </Button>
@@ -1368,9 +1719,18 @@ function SchemaPanel({ cid, db, col }: { cid: string; db: string; col: string })
 }
 
 function AggregatePanel({ cid, db, col }: { cid: string; db: string; col: string }) {
-  const [pipeline, setPipeline] = useState(
-    '[\n  { "$match": {} },\n  { "$limit": 20 }\n]',
-  );
+  const [pipeline, setPipeline] = useState(() => {
+    try {
+      const pre = sessionStorage.getItem(`vast-agg:${cid}:${db}:${col}`);
+      if (pre) {
+        sessionStorage.removeItem(`vast-agg:${cid}:${db}:${col}`);
+        return pre;
+      }
+    } catch {
+      // ignore
+    }
+    return '[\n  { "$match": {} },\n  { "$limit": 20 }\n]';
+  });
   const [result, setResult] = useState<unknown[] | null>(null);
   const [ms, setMs] = useState<number | null>(null);
   const run = useMutation({

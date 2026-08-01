@@ -6,6 +6,8 @@ import { useUiStore } from '@/stores/ui';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { ExplorerSidebar } from '@/components/layout/ExplorerSidebar';
+import { TabBar } from '@/components/layout/TabBar';
 
 export function AppShell() {
   const location = useLocation();
@@ -64,48 +66,17 @@ export function AppShell() {
       </header>
       <div className="flex min-h-0 flex-1">
         {sidebarOpen && (
-          <aside className="flex w-56 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-sidebar)]">
-            <nav className="flex flex-col gap-1 p-3">
-              <NavLink to="/" active={location.pathname === '/'}>
-                Connections
-              </NavLink>
-              <NavLink to="/settings" active={location.pathname === '/settings'}>
-                Settings
-              </NavLink>
-            </nav>
-            <div className="mt-auto border-t border-[var(--color-border)] p-3 text-[11px] text-[var(--color-muted-fg)]">
-              MongoDB workbench
-            </div>
+          <aside className="flex w-64 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-sidebar)] md:w-72">
+            <ExplorerSidebar />
           </aside>
         )}
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden [&>*]:min-h-0 [&>*]:flex-1 [&>*]:overflow-hidden">
-          <Outlet />
-        </main>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <TabBar />
+          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden [&>*]:min-h-0 [&>*]:flex-1 [&>*]:overflow-hidden">
+            <Outlet />
+          </main>
+        </div>
       </div>
     </div>
-  );
-}
-
-function NavLink({
-  to,
-  active,
-  children,
-}: {
-  to: string;
-  active: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <Link
-      to={to}
-      className={cn(
-        'rounded-lg px-3 py-2 text-sm transition-colors',
-        active
-          ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)] font-medium'
-          : 'text-[var(--color-muted)] hover:bg-[var(--color-card-hover)] hover:text-[var(--color-foreground)]',
-      )}
-    >
-      {children}
-    </Link>
   );
 }

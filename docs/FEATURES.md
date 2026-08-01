@@ -25,6 +25,15 @@
 - [x] Breadcrumbs and deep routes
 - [x] Loading / empty / error / success toasts on main flows
 - [x] Document inspector defaults to Fields view for quick edits
+- [x] **Explorer sidebar** — connections → databases → collections tree
+- [x] **Collection tabs** — open multiple collections, switch/close
+- [x] **Query editor** — mongosh-style scripts (`db.col.find({}).sort().limit()`)
+- [x] **Example templates** — find, findOne, count, aggregate, updateMany, etc.
+- [x] **Visual query builder** — point-and-click filters for beginners
+- [x] **Saved scripts** — save/load queries in the browser
+- [x] **Preview** — dry-run match count + sample docs (no writes)
+- [x] **Result summary** — matched / modified / deleted / inserted counts after Execute
+- [x] **Write execution** — updateOne/Many, deleteOne/Many, insertOne/Many with confirm
 
 ### Databases & collections
 - [x] List / create / drop (type-to-confirm)

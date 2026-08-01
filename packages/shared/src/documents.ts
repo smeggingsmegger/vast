@@ -113,3 +113,20 @@ export const LoginBodySchema = z.object({
 export const SchemaAnalyzeBodySchema = z.object({
   sampleSize: z.number().int().min(1).max(10_000).optional(),
 });
+
+/** Dry-run: match count + sample docs for a filter. */
+export const PreviewBodySchema = z.object({
+  filter: z.unknown().optional(),
+  sampleSize: z.number().int().min(1).max(20).optional(),
+  maxTimeMS: z.number().int().min(1).max(300_000).optional(),
+});
+
+export const UpdateByFilterBodySchema = z.object({
+  filter: z.unknown(),
+  update: z.unknown(),
+  upsert: z.boolean().optional(),
+});
+
+export const DeleteByFilterBodySchema = z.object({
+  filter: z.unknown(),
+});

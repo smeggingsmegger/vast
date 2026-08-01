@@ -150,10 +150,71 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ filter }) },
     ),
 
+  /** Match count + sample docs (dry-run for any filter). */
+  preview: (
+    cid: string,
+    db: string,
+    col: string,
+    body?: { filter?: unknown; sampleSize?: number },
+  ) =>
+    request<{
+      data: {
+        matchCount: number;
+        sample: Record<string, unknown>[];
+        sampleSize: number;
+        executionMs: number;
+      };
+    }>(`/api/v1/c/${cid}/db/${encodeURIComponent(db)}/col/${encodeURIComponent(col)}/preview`, {
+      method: 'POST',
+      body: JSON.stringify(body ?? {}),
+    }),
+
+  updateOneByFilter: (
+    cid: string,
+    db: string,
+    col: string,
+    body: { filter: unknown; update: unknown; upsert?: boolean },
+  ) =>
+    request<{
+      data: { matchedCount: number; modifiedCount: number; upsertedCount: number };
+    }>(
+      `/api/v1/c/${cid}/db/${encodeURIComponent(db)}/col/${encodeURIComponent(col)}/update-one`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+
+  updateManyByFilter: (
+    cid: string,
+    db: string,
+    col: string,
+    body: { filter: unknown; update: unknown },
+  ) =>
+    request<{ data: { matchedCount: number; modifiedCount: number } }>(
+      `/api/v1/c/${cid}/db/${encodeURIComponent(db)}/col/${encodeURIComponent(col)}/update-many`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+
+  deleteOneByFilter: (cid: string, db: string, col: string, filter: unknown) =>
+    request<{ data: { deletedCount: number; matchedCount: number } }>(
+      `/api/v1/c/${cid}/db/${encodeURIComponent(db)}/col/${encodeURIComponent(col)}/delete-one`,
+      { method: 'POST', body: JSON.stringify({ filter }) },
+    ),
+
+  deleteManyByFilter: (cid: string, db: string, col: string, filter: unknown) =>
+    request<{ data: { deletedCount: number; matchedCount: number } }>(
+      `/api/v1/c/${cid}/db/${encodeURIComponent(db)}/col/${encodeURIComponent(col)}/delete-many`,
+      { method: 'POST', body: JSON.stringify({ filter }) },
+    ),
+
   insertDocument: (cid: string, db: string, col: string, document: unknown) =>
     request<{ data: Record<string, unknown> }>(
       `/api/v1/c/${cid}/db/${encodeURIComponent(db)}/col/${encodeURIComponent(col)}/documents`,
       { method: 'POST', body: JSON.stringify({ document }) },
+    ),
+
+  insertMany: (cid: string, db: string, col: string, documents: unknown[]) =>
+    request<{ data: { insertedCount: number; ids: unknown[] } }>(
+      `/api/v1/c/${cid}/db/${encodeURIComponent(db)}/col/${encodeURIComponent(col)}/documents/bulk`,
+      { method: 'POST', body: JSON.stringify({ documents }) },
     ),
 
   replaceDocument: (cid: string, db: string, col: string, id: string, document: unknown) =>
