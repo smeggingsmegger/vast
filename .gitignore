@@ -10,6 +10,9 @@ apps/web/dist/
 apps/server/dist/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/binaries/
+apps/desktop/src-tauri/resources/
+apps/desktop/.sidecar-cache/
+apps/desktop/sidecar/
 
 # Data / runtime
 data/

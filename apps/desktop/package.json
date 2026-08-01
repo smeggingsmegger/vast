@@ -2,11 +2,18 @@
   "name": "@vast/desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "Tauri 2 desktop shell for Vast (sidecar wiring in Phase 7)",
+  "description": "Tauri 2 desktop shell for Vast",
   "scripts": {
-    "dev": "echo 'Tauri desktop scaffold — run full setup in Phase 7: see docs/DESKTOP.md'",
-    "build": "echo 'Desktop build not yet wired; see docs/DESKTOP.md'",
+    "tauri": "tauri",
+    "sidecar": "bash ../../scripts/desktop-package-sidecar.sh",
+    "dev": "tauri dev",
+    "build": "bash ../../scripts/desktop-package-sidecar.sh && tauri build",
+    "build:debug": "bash ../../scripts/desktop-package-sidecar.sh && tauri build --debug",
+    "info": "tauri info",
     "typecheck": "echo 'ok'",
     "lint": "echo 'ok'"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.4.0"
   }
 }

@@ -76,9 +76,22 @@ docs/
 
 ## Desktop (Tauri)
 
-Scaffold under `apps/desktop` — `cargo check` compiles. Sidecar packaging and installers are wired for Phase completion; desktop always binds the API to **localhost only**.
+```bash
+# Prerequisites: Rust (rustup), platform UI deps (see docs/DESKTOP.md)
+# Node is *bundled into the app* for standalone use.
 
-See [docs/DESKTOP.md](docs/DESKTOP.md).
+pnpm install
+pnpm desktop:build   # packages API+UI+Node, builds installer for *this* OS
+
+# Dev (also standalone — no separate server terminal)
+pnpm desktop:dev
+```
+
+Artifacts: `apps/desktop/src-tauri/target/release/bundle/` (e.g. `macos/Vast.app`).
+
+The app spawns a localhost API sidecar automatically so connections load without `pnpm dev:server`.
+
+**Windows / Linux / Mac:** build on each OS (or GitHub Actions **Desktop** workflow). See [docs/DESKTOP.md](docs/DESKTOP.md).
 
 ## Docs
 

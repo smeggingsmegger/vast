@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Database, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,9 +33,14 @@ export function LoginPage() {
     <div className="flex min-h-screen items-center justify-center p-6">
       <div className="w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-xl">
         <div className="mb-6 flex flex-col items-center text-center">
-          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)]">
-            <Database className="h-6 w-6" />
-          </div>
+          <img
+            src="/vast-logo.png"
+            alt="Vast"
+            width={56}
+            height={56}
+            className="mb-3 h-14 w-14 object-contain"
+            draggable={false}
+          />
           <h1 className="text-lg font-semibold">Sign in to Vast</h1>
           <p className="mt-1 text-sm text-[var(--color-muted)]">Enter the admin password</p>
         </div>

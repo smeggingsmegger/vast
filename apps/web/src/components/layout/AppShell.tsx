@@ -1,6 +1,6 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Database, Moon, Settings, Sun, PanelLeft, Command } from 'lucide-react';
+import { Moon, Settings, Sun, PanelLeft, Command } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useUiStore } from '@/stores/ui';
 import { Button } from '@/components/ui/button';
@@ -26,10 +26,19 @@ export function AppShell() {
         >
           <PanelLeft className="h-4 w-4" />
         </Button>
-        <Link to="/" className="flex items-center gap-2 font-semibold tracking-tight">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)]">
-            <Database className="h-4 w-4" />
-          </span>
+        <Link
+          to="/"
+          className="flex items-center gap-2 font-semibold tracking-tight"
+          title="Vast home"
+        >
+          <img
+            src="/vast-logo.png"
+            alt="Vast"
+            width={28}
+            height={28}
+            className="h-7 w-7 shrink-0 object-contain"
+            draggable={false}
+          />
           <span>Vast</span>
         </Link>
         <div className="flex-1" />

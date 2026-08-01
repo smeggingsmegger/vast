@@ -25,7 +25,12 @@
     "format:check": "prettier --check .",
     "docker:up": "docker compose -f docker/docker-compose.yml up --build",
     "docker:down": "docker compose -f docker/docker-compose.yml down",
-    "docker:test": "docker compose -f docker/docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from e2e"
+    "docker:test": "docker compose -f docker/docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from e2e",
+    "desktop:prepare": "bash scripts/desktop-prepare.sh",
+    "desktop:sidecar": "bash scripts/desktop-package-sidecar.sh",
+    "desktop:dev": "bash scripts/desktop-dev.sh",
+    "desktop:build": "bash scripts/desktop-build.sh",
+    "desktop:info": "pnpm --filter @vast/desktop exec tauri info"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",

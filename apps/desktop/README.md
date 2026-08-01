@@ -1,21 +1,42 @@
 # Vast Desktop (Tauri)
 
-Scaffold placeholder for the Tauri 2 shell.
+Tauri 2 shell for the Vast workbench.
 
-## Planned architecture
+## Build installers (this OS)
 
-1. Package `apps/server` as a sidecar binary (`vast-server-<triple>`).
-2. Tauri spawns the sidecar on `127.0.0.1:<ephemeralPort>`.
-3. WebView loads that origin (same SPA as Docker).
-4. Data directory uses the OS app data path.
+From repo root:
 
-Full design: [docs/DESKTOP.md](../../docs/DESKTOP.md).
+```bash
+pnpm install
+pnpm desktop:build
+# packages API + SPA + Node, then builds
+# → apps/desktop/src-tauri/target/release/bundle/
+```
 
-## Phase 7 checklist
+Dev (standalone — no separate server):
 
-- [ ] `src-tauri/` with Tauri 2
-- [ ] Sidecar packaging script
+```bash
+pnpm desktop:dev
+```
+
+On launch the app starts a localhost API and opens the UI there, so connections load without `pnpm dev:server`.
+
+## All platforms
+
+Use CI (`.github/workflows/desktop.yml`) or build on each OS. See [docs/DESKTOP.md](../../docs/DESKTOP.md).
+
+## Architecture
+
+1. Bundle SPA (`apps/web/dist`) into the WebView.
+2. Sidecar `vast-server` on `127.0.0.1` (lifecycle in `src-tauri/src/lib.rs`).
+3. OS app data dir for secrets/jobs.
+
+## Checklist
+
+- [x] `src-tauri/` Tauri 2
+- [x] Local + CI build scripts
+- [ ] Sidecar packaging script (`externalBin`)
 - [ ] Health-wait before showing window
-- [ ] Graceful shutdown
+- [ ] Graceful shutdown polish
 - [ ] Native file dialogs for import/export
-- [ ] CI matrix builds (macOS / Windows / Linux)
+- [x] CI matrix builds (macOS / Windows / Linux)
