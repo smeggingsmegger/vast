@@ -55,6 +55,7 @@ export function DatabasePage() {
   });
 
   return (
+    <div className="h-full min-h-0 overflow-auto">
     <div className="mx-auto max-w-5xl p-6 md:p-10">
       <div className="mb-2 flex flex-wrap items-center gap-1 text-xs text-[var(--color-muted-fg)]">
         <Link to="/" className="hover:text-[var(--color-foreground)]">
@@ -160,6 +161,7 @@ export function DatabasePage() {
           </Button>
         </div>
       </Dialog>
+    </div>
     </div>
   );
 }

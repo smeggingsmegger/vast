@@ -13,7 +13,7 @@ export function AppShell() {
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: 60_000 });
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div className="flex h-full max-h-full flex-col overflow-hidden">
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-card)] px-3">
         <Button
           variant="ghost"
@@ -78,7 +78,7 @@ export function AppShell() {
             </div>
           </aside>
         )}
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto">
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden [&>*]:min-h-0 [&>*]:flex-1 [&>*]:overflow-hidden">
           <Outlet />
         </main>
       </div>

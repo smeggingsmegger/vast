@@ -45,7 +45,7 @@ Open http://localhost:8080 — add a connection to your MongoDB URI.
 
 See [docs/FEATURES.md](docs/FEATURES.md) for the full checklist.
 
-**Highlights:** connections (encrypted), DB/collection lifecycle, document grid + EJSON editor, type conversion, aggregation, indexes, schema analysis, import/export, dump/restore, read-only mode, drop confirmations, command palette, dark/light theme.
+**Highlights:** encrypted connections (Mongo + **SSH tunnels** with password or private key), type-aware **single-field edit** (double-click cell or Fields → Edit), full JSON editor, aggregation, indexes, schema, import/export, dump/restore, read-only mode, command palette, dark/light theme.
 
 ## Tests
 

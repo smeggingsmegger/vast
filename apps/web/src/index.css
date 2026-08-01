@@ -47,6 +47,14 @@
     --color-input: #ffffff;
   }
 
+  /* Lock app to the viewport so nested panes own scrolling (not the document). */
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+  }
+
   body {
     font-family: var(--font-sans);
     background-color: var(--color-background);

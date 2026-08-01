@@ -27,6 +27,7 @@ export function HomePage() {
   });
 
   return (
+    <div className="h-full min-h-0 overflow-auto">
     <div className="mx-auto max-w-5xl p-6 md:p-10">
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
@@ -78,6 +79,7 @@ export function HomePage() {
         </ul>
       )}
     </div>
+    </div>
   );
 }
 
@@ -111,11 +113,44 @@ function ConnectionForm({
   const [uri, setUri] = useState('mongodb://localhost:27017');
   const [readOnly, setReadOnly] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [sshEnabled, setSshEnabled] = useState(false);
+  const [sshHost, setSshHost] = useState('');
+  const [sshPort, setSshPort] = useState('22');
+  const [sshUser, setSshUser] = useState('');
+  const [sshAuth, setSshAuth] = useState<'password' | 'privateKey'>('password');
+  const [sshPassword, setSshPassword] = useState('');
+  const [sshKey, setSshKey] = useState('');
+  const [sshPassphrase, setSshPassphrase] = useState('');
+  const [sshDestHost, setSshDestHost] = useState('127.0.0.1');
+  const [sshDestPort, setSshDestPort] = useState('27017');
+
+  function buildSsh() {
+    if (!sshEnabled) return undefined;
+    return {
+      enabled: true,
+      host: sshHost,
+      port: Number(sshPort) || 22,
+      username: sshUser,
+      authMethod: sshAuth,
+      password: sshAuth === 'password' ? sshPassword : undefined,
+      privateKey: sshAuth === 'privateKey' ? sshKey : undefined,
+      passphrase: sshAuth === 'privateKey' && sshPassphrase ? sshPassphrase : undefined,
+      destinationHost: sshDestHost || undefined,
+      destinationPort: Number(sshDestPort) || undefined,
+    };
+  }
 
   const create = useMutation({
-    mutationFn: () => api.createConnection({ name, uri, readOnly, color: 'teal' }),
+    mutationFn: () =>
+      api.createConnection({
+        name,
+        uri,
+        readOnly,
+        color: 'teal',
+        ssh: buildSsh(),
+      }),
     onSuccess: () => {
-      toast.success('Connection saved');
+      toast.success('Connection saved (credentials encrypted at rest)');
       onCreated();
     },
     onError: (err: Error) => {
@@ -126,9 +161,13 @@ function ConnectionForm({
   async function handleTest() {
     setTesting(true);
     try {
-      const { data } = await api.testUri(uri);
+      const { data } = await api.testUri(uri, buildSsh());
       if (data.ok) {
-        toast.success(data.message + (data.serverVersion ? ` (MongoDB ${data.serverVersion})` : ''));
+        toast.success(
+          data.message +
+            (data.serverVersion ? ` (MongoDB ${data.serverVersion})` : '') +
+            (data.viaSsh ? ' · via SSH' : ''),
+        );
       } else {
         toast.error(data.message);
       }
@@ -150,7 +189,7 @@ function ConnectionForm({
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Production" />
         </label>
         <label className="grid gap-1.5 text-sm">
-          <span className="text-[var(--color-muted)]">Connection URI</span>
+          <span className="text-[var(--color-muted)]">MongoDB URI</span>
           <Input
             value={uri}
             onChange={(e) => setUri(e.target.value)}
@@ -158,6 +197,10 @@ function ConnectionForm({
             className="font-mono text-xs"
             spellCheck={false}
           />
+          <span className="text-[11px] text-[var(--color-muted-fg)]">
+            With SSH, use the host/port as seen from the bastion (often mongodb://127.0.0.1:27017).
+            mongodb+srv is not supported through tunnels.
+          </span>
         </label>
         <label className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
           <input
@@ -168,6 +211,95 @@ function ConnectionForm({
           />
           Read-only (block writes and destructive operations)
         </label>
+
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-background)]/50 p-4">
+          <label className="flex items-center gap-2 text-sm font-medium">
+            <input
+              type="checkbox"
+              checked={sshEnabled}
+              onChange={(e) => setSshEnabled(e.target.checked)}
+              className="rounded border-[var(--color-border)]"
+            />
+            Connect via SSH tunnel
+          </label>
+          {sshEnabled && (
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <label className="grid gap-1 text-sm sm:col-span-1">
+                <span className="text-[var(--color-muted)]">SSH host</span>
+                <Input value={sshHost} onChange={(e) => setSshHost(e.target.value)} placeholder="bastion.example.com" />
+              </label>
+              <label className="grid gap-1 text-sm">
+                <span className="text-[var(--color-muted)]">SSH port</span>
+                <Input value={sshPort} onChange={(e) => setSshPort(e.target.value)} />
+              </label>
+              <label className="grid gap-1 text-sm sm:col-span-2">
+                <span className="text-[var(--color-muted)]">SSH username</span>
+                <Input value={sshUser} onChange={(e) => setSshUser(e.target.value)} placeholder="ubuntu" />
+              </label>
+              <label className="grid gap-1 text-sm sm:col-span-2">
+                <span className="text-[var(--color-muted)]">Auth method</span>
+                <select
+                  className="h-9 rounded-lg border border-[var(--color-border)] bg-[var(--color-input)] px-2 text-sm"
+                  value={sshAuth}
+                  onChange={(e) => setSshAuth(e.target.value as 'password' | 'privateKey')}
+                >
+                  <option value="password">Password</option>
+                  <option value="privateKey">Private key (passkey / PEM)</option>
+                </select>
+              </label>
+              {sshAuth === 'password' ? (
+                <label className="grid gap-1 text-sm sm:col-span-2">
+                  <span className="text-[var(--color-muted)]">SSH password</span>
+                  <Input
+                    type="password"
+                    value={sshPassword}
+                    onChange={(e) => setSshPassword(e.target.value)}
+                    autoComplete="new-password"
+                  />
+                </label>
+              ) : (
+                <>
+                  <label className="grid gap-1 text-sm sm:col-span-2">
+                    <span className="text-[var(--color-muted)]">Private key (PEM)</span>
+                    <textarea
+                      className="min-h-[100px] w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-input)] p-2 font-mono text-[11px]"
+                      value={sshKey}
+                      onChange={(e) => setSshKey(e.target.value)}
+                      placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                      spellCheck={false}
+                    />
+                  </label>
+                  <label className="grid gap-1 text-sm sm:col-span-2">
+                    <span className="text-[var(--color-muted)]">Key passphrase (optional)</span>
+                    <Input
+                      type="password"
+                      value={sshPassphrase}
+                      onChange={(e) => setSshPassphrase(e.target.value)}
+                      autoComplete="new-password"
+                    />
+                  </label>
+                </>
+              )}
+              <label className="grid gap-1 text-sm">
+                <span className="text-[var(--color-muted)]">Mongo host from bastion</span>
+                <Input
+                  value={sshDestHost}
+                  onChange={(e) => setSshDestHost(e.target.value)}
+                  placeholder="127.0.0.1"
+                  className="font-mono text-xs"
+                />
+              </label>
+              <label className="grid gap-1 text-sm">
+                <span className="text-[var(--color-muted)]">Mongo port from bastion</span>
+                <Input value={sshDestPort} onChange={(e) => setSshDestPort(e.target.value)} />
+              </label>
+              <p className="text-[11px] text-[var(--color-muted-fg)] sm:col-span-2">
+                Secrets are encrypted with VAST_SECRET_KEY and never returned by the API.
+              </p>
+            </div>
+          )}
+        </div>
+
         <div className="flex flex-wrap gap-2 pt-1">
           <Button
             type="button"
@@ -253,6 +385,7 @@ function ConnectionCard({ connection }: { connection: ConnectionPublic }) {
           <h3 className="font-medium">{connection.name}</h3>
           <Badge tone={statusTone}>{connection.status}</Badge>
           {connection.readOnly && <Badge tone="warning">read-only</Badge>}
+          {connection.ssh?.enabled && <Badge tone="accent">SSH</Badge>}
         </div>
         <p className="mt-0.5 truncate font-mono text-xs text-[var(--color-muted-fg)]">
           {connection.uriDisplay}

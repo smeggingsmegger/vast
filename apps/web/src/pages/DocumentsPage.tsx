@@ -1,9 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { useMemo, useState } from 'react';
+import {
+  Component,
+  useEffect,
+  useMemo,
+  useState,
+  type ErrorInfo,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from 'react';
 import { toast } from 'sonner';
 import {
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
+  Columns3,
   Download,
   Loader2,
   Plus,
@@ -13,12 +24,35 @@ import {
   Braces,
   ListTree,
   Filter,
+  Bookmark,
+  Pencil,
+  Copy,
+  Braces as BracesIcon,
 } from 'lucide-react';
 import { api, bsonTypeOf, formatCell, idToPath } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Dialog } from '@/components/ui/dialog';
+import {
+  FieldEditDialog,
+  type FieldEditPayload,
+} from '@/components/documents/FieldEditDialog';
+import {
+  clampColumnWidth,
+  DEFAULT_COLUMN_WIDTH,
+  deleteSavedView,
+  loadViewStore,
+  nextSortState,
+  resolveVisibleColumns,
+  setLastViewId,
+  sortToApi,
+  upsertSavedView,
+  type CollectionViewState,
+  type SavedCollectionView,
+  type SortDirection,
+} from '@/lib/collection-views';
+import { copyText, valueAsMongoShell, valueAsString } from '@/lib/copy-value';
 import { cn } from '@/lib/utils';
 
 const TYPE_TONES: Record<string, string> = {
@@ -38,6 +72,40 @@ const TYPE_TONES: Record<string, string> = {
 
 type Tab = 'documents' | 'indexes' | 'schema' | 'aggregate' | 'import';
 
+class DocumentsErrorBoundary extends Component<
+  { children: ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('DocumentsPage crash', error, info);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="m-6 rounded-xl border border-red-500/40 bg-red-500/10 p-6 text-sm">
+          <h2 className="mb-2 font-semibold text-red-300">Failed to render documents</h2>
+          <p className="font-mono text-xs text-red-200/90">{this.state.error.message}</p>
+          <button
+            type="button"
+            className="mt-4 rounded-lg bg-[var(--color-input)] px-3 py-1.5 text-xs"
+            onClick={() => this.setState({ error: null })}
+          >
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export function DocumentsPage() {
   const { cid = '', db: dbParam = '', col: colParam = '' } = useParams();
   const db = decodeURIComponent(dbParam);
@@ -47,8 +115,9 @@ export function DocumentsPage() {
   const setTab = (t: Tab) => setSearchParams({ tab: t });
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="border-b border-[var(--color-border)] px-4 py-3 md:px-6">
+    <DocumentsErrorBoundary>
+    <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden">
+      <div className="shrink-0 border-b border-[var(--color-border)] px-4 py-3 md:px-6">
         <div className="mb-2 flex flex-wrap items-center gap-1 text-xs text-[var(--color-muted-fg)]">
           <Link to="/" className="hover:text-[var(--color-foreground)]">
             Connections
@@ -96,14 +165,35 @@ export function DocumentsPage() {
           </nav>
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto">
-        {tab === 'documents' && <DocumentsPanel cid={cid} db={db} col={col} />}
-        {tab === 'indexes' && <IndexesPanel cid={cid} db={db} col={col} />}
-        {tab === 'schema' && <SchemaPanel cid={cid} db={db} col={col} />}
-        {tab === 'aggregate' && <AggregatePanel cid={cid} db={db} col={col} />}
-        {tab === 'import' && <ImportExportPanel cid={cid} db={db} col={col} />}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {tab === 'documents' && (
+          <div className="flex h-0 min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            <DocumentsPanel cid={cid} db={db} col={col} />
+          </div>
+        )}
+        {tab === 'indexes' && (
+          <div className="min-h-0 flex-1 overflow-auto">
+            <IndexesPanel cid={cid} db={db} col={col} />
+          </div>
+        )}
+        {tab === 'schema' && (
+          <div className="min-h-0 flex-1 overflow-auto">
+            <SchemaPanel cid={cid} db={db} col={col} />
+          </div>
+        )}
+        {tab === 'aggregate' && (
+          <div className="min-h-0 flex-1 overflow-auto">
+            <AggregatePanel cid={cid} db={db} col={col} />
+          </div>
+        )}
+        {tab === 'import' && (
+          <div className="min-h-0 flex-1 overflow-auto">
+            <ImportExportPanel cid={cid} db={db} col={col} />
+          </div>
+        )}
       </div>
     </div>
+    </DocumentsErrorBoundary>
   );
 }
 
@@ -121,26 +211,155 @@ function DocumentsPanel({ cid, db, col }: { cid: string; db: string; col: string
   const [convertPath, setConvertPath] = useState<string | null>(null);
   const [convertType, setConvertType] = useState('string');
   const [fieldFilter, setFieldFilter] = useState({ field: '', op: 'eq', value: '' });
+  const [fieldEdit, setFieldEdit] = useState<{ path: string; value: unknown } | null>(null);
+
+  // Column / sort / views
+  const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
+  const [visibleColumns, setVisibleColumns] = useState<string[] | null>(null);
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [sortField, setSortField] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<SortDirection>(1);
+  const [showColumnsMenu, setShowColumnsMenu] = useState(false);
+  const [showViewsMenu, setShowViewsMenu] = useState(false);
+  const [savedViews, setSavedViews] = useState<SavedCollectionView[]>([]);
+  const [activeViewId, setActiveViewId] = useState<string | null>(null);
+  const [saveViewOpen, setSaveViewOpen] = useState(false);
+  const [saveViewName, setSaveViewName] = useState('');
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    field: string;
+    value: unknown;
+  } | null>(null);
+
+  // Load saved views when collection changes
+  useEffect(() => {
+    const store = loadViewStore(cid, db, col);
+    setSavedViews(store.views);
+    // Reset view UI state for new collection
+    setHiddenColumns([]);
+    setVisibleColumns(null);
+    setColumnWidths({});
+    setSortField(null);
+    setSortDir(1);
+    setActiveViewId(null);
+    setShowColumnsMenu(false);
+    setShowViewsMenu(false);
+    setContextMenu(null);
+  }, [cid, db, col]);
+
+  // Close context menu on escape / scroll
+  useEffect(() => {
+    if (!contextMenu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setContextMenu(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [contextMenu]);
 
   const docs = useQuery({
-    queryKey: ['docs', cid, db, col, appliedFilter, skip, limit],
-    queryFn: () => api.find(cid, db, col, { filter: appliedFilter, skip, limit }),
+    queryKey: ['docs', cid, db, col, appliedFilter, skip, limit, sortField, sortDir],
+    queryFn: () =>
+      api.find(cid, db, col, {
+        filter: appliedFilter,
+        skip,
+        limit,
+        sort: sortToApi(sortField, sortDir),
+      }),
   });
 
-  const columns = useMemo(() => {
+  const allColumns = useMemo(() => {
     const keys = new Set<string>(['_id']);
     for (const d of docs.data?.data ?? []) {
       Object.keys(d).forEach((k) => keys.add(k));
-      if (keys.size > 12) break;
     }
-    return [...keys].slice(0, 12);
+    // Prefer stable order: _id first, then alphabetical
+    const list = [...keys];
+    list.sort((a, b) => {
+      if (a === '_id') return -1;
+      if (b === '_id') return 1;
+      return a.localeCompare(b);
+    });
+    return list;
   }, [docs.data]);
+
+  const columns = useMemo(
+    () => resolveVisibleColumns(allColumns, { visibleColumns, hiddenColumns }),
+    [allColumns, visibleColumns, hiddenColumns],
+  );
+
+  function currentViewState(): CollectionViewState {
+    return {
+      visibleColumns,
+      hiddenColumns,
+      columnWidths,
+      sortField,
+      sortDir,
+      filterJson: filterText,
+    };
+  }
+
+  function applyViewState(state: CollectionViewState, viewId?: string | null) {
+    setVisibleColumns(state.visibleColumns);
+    setHiddenColumns(state.hiddenColumns ?? []);
+    setColumnWidths(state.columnWidths ?? {});
+    setSortField(state.sortField);
+    setSortDir(state.sortDir ?? 1);
+    setFilterText(state.filterJson ?? '{}');
+    try {
+      setAppliedFilter(JSON.parse(state.filterJson || '{}'));
+    } catch {
+      setAppliedFilter({});
+    }
+    setSkip(0);
+    setActiveViewId(viewId ?? null);
+  }
+
+  function colWidth(field: string): number {
+    return clampColumnWidth(columnWidths[field] ?? DEFAULT_COLUMN_WIDTH);
+  }
+
+  function startResize(field: string, e: ReactMouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = colWidth(field);
+    const onMove = (ev: MouseEvent) => {
+      const next = clampColumnWidth(startW + (ev.clientX - startX));
+      setColumnWidths((prev) => ({ ...prev, [field]: next }));
+      setActiveViewId(null);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  async function copyValue(kind: 'string' | 'mongo', value: unknown) {
+    const text = kind === 'string' ? valueAsString(value) : valueAsMongoShell(value);
+    try {
+      await copyText(text);
+      toast.success(kind === 'string' ? 'Copied as string' : 'Copied as Mongo value');
+    } catch {
+      toast.error('Could not copy to clipboard');
+    }
+    setContextMenu(null);
+  }
+
+  function refreshViewsList() {
+    const store = loadViewStore(cid, db, col);
+    setSavedViews(store.views);
+  }
 
   function applyFilter() {
     try {
       const parsed = JSON.parse(filterText || '{}');
       setAppliedFilter(parsed);
       setSkip(0);
+      setActiveViewId(null);
     } catch {
       toast.error('Invalid filter JSON');
     }
@@ -160,6 +379,54 @@ function DocumentsPanel({ cid, db, col }: { cid: string; db: string; col: string
     setFilterText(JSON.stringify(filter, null, 2));
     setAppliedFilter(filter);
     setSkip(0);
+    setActiveViewId(null);
+  }
+
+  function toggleColumn(field: string) {
+    if (field === '_id') return; // always show _id
+    setHiddenColumns((prev) => {
+      if (prev.includes(field)) return prev.filter((f) => f !== field);
+      return [...prev, field];
+    });
+    // If using explicit visible list, also update it
+    setVisibleColumns((prev) => {
+      if (!prev) return prev;
+      if (prev.includes(field)) return prev.filter((f) => f !== field);
+      return [...prev, field];
+    });
+    setActiveViewId(null);
+  }
+
+  function onHeaderClick(field: string) {
+    const next = nextSortState(sortField, sortDir, field);
+    setSortField(next.sortField);
+    setSortDir(next.sortDir);
+    setSkip(0);
+    setActiveViewId(null);
+  }
+
+  function handleSaveView() {
+    const view = upsertSavedView(cid, db, col, saveViewName, currentViewState());
+    refreshViewsList();
+    setActiveViewId(view.id);
+    setSaveViewOpen(false);
+    setSaveViewName('');
+    toast.success(`View “${view.name}” saved`);
+  }
+
+  function handleApplyView(view: SavedCollectionView) {
+    applyViewState(view, view.id);
+    setLastViewId(cid, db, col, view.id);
+    refreshViewsList();
+    setShowViewsMenu(false);
+    toast.message(`Applied view “${view.name}”`);
+  }
+
+  function handleDeleteView(id: string) {
+    deleteSavedView(cid, db, col, id);
+    if (activeViewId === id) setActiveViewId(null);
+    refreshViewsList();
+    toast.message('View deleted');
   }
 
   const saveJson = useMutation({
@@ -219,16 +486,54 @@ function DocumentsPanel({ cid, db, col }: { cid: string; db: string; col: string
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const setFieldMut = useMutation({
+    mutationFn: async (payload: FieldEditPayload) => {
+      if (!selected) throw new Error('No document selected');
+      return api.setField(cid, db, col, idToPath(selected._id), payload);
+    },
+    onSuccess: (res) => {
+      toast.success('Field updated');
+      setSelected(res.data);
+      setJsonText(JSON.stringify(res.data, null, 2));
+      setFieldEdit(null);
+      void qc.invalidateQueries({ queryKey: ['docs', cid, db, col] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   function openDoc(doc: Record<string, unknown>) {
     setSelected(doc);
     setJsonText(JSON.stringify(doc, null, 2));
-    setEditMode('json');
+    setEditMode('tree');
+  }
+
+  function openFieldEdit(path: string, value: unknown) {
+    if (path === '_id') {
+      toast.message('_id cannot be edited in place');
+      return;
+    }
+    if (!selected) {
+      toast.error('Select a document first');
+      return;
+    }
+    setFieldEdit({ path, value });
+  }
+
+  function getNested(doc: Record<string, unknown>, path: string): unknown {
+    const parts = path.split('.');
+    let cur: unknown = doc;
+    for (const p of parts) {
+      if (cur === null || cur === undefined || typeof cur !== 'object') return undefined;
+      cur = (cur as Record<string, unknown>)[p];
+    }
+    return cur;
   }
 
   return (
-    <div className="flex h-full min-h-[480px] flex-col lg:flex-row">
-      <div className="flex min-w-0 flex-1 flex-col border-r border-[var(--color-border)]">
-        <div className="space-y-2 border-b border-[var(--color-border)] p-3">
+    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden lg:flex-row">
+      {/* Left: toolbar + grid. Column mode: h-0+flex-1 caps height. Row mode: stretch via min-h-0. */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r border-[var(--color-border)]">
+        <div className="shrink-0 space-y-2 border-b border-[var(--color-border)] p-3">
           <div className="flex flex-wrap items-center gap-2">
             <Filter className="h-4 w-4 text-[var(--color-muted)]" />
             <Input
@@ -288,10 +593,139 @@ function DocumentsPanel({ cid, db, col }: { cid: string; db: string; col: string
               <Plus className="h-3.5 w-3.5" />
               Insert
             </Button>
+            <div className="relative">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  setShowColumnsMenu((v) => !v);
+                  setShowViewsMenu(false);
+                }}
+              >
+                <Columns3 className="h-3.5 w-3.5" />
+                Columns
+                {hiddenColumns.length > 0 && (
+                  <Badge tone="accent" className="ml-1">
+                    −{hiddenColumns.length}
+                  </Badge>
+                )}
+              </Button>
+              {showColumnsMenu && (
+                <div className="absolute left-0 z-30 mt-1 max-h-64 w-56 overflow-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-2 shadow-xl">
+                  <div className="mb-2 flex items-center justify-between px-1">
+                    <span className="text-[11px] font-medium text-[var(--color-muted)]">
+                      Show / hide fields
+                    </span>
+                    <button
+                      type="button"
+                      className="text-[11px] text-[var(--color-accent)]"
+                      onClick={() => {
+                        setHiddenColumns([]);
+                        setVisibleColumns(null);
+                        setActiveViewId(null);
+                      }}
+                    >
+                      Show all
+                    </button>
+                  </div>
+                  {allColumns.length === 0 && (
+                    <p className="px-1 py-2 text-xs text-[var(--color-muted-fg)]">Load documents first</p>
+                  )}
+                  {allColumns.map((field) => {
+                    const checked = columns.includes(field);
+                    return (
+                      <label
+                        key={field}
+                        className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-[var(--color-card-hover)]"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={field === '_id'}
+                          onChange={() => toggleColumn(field)}
+                          className="rounded border-[var(--color-border)]"
+                        />
+                        <span className="min-w-0 flex-1 truncate font-mono">{field}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="relative">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  refreshViewsList();
+                  setShowViewsMenu((v) => !v);
+                  setShowColumnsMenu(false);
+                }}
+              >
+                <Bookmark className="h-3.5 w-3.5" />
+                Views
+                {activeViewId && <Badge tone="accent" className="ml-1">on</Badge>}
+              </Button>
+              {showViewsMenu && (
+                <div className="absolute left-0 z-30 mt-1 w-64 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-2 shadow-xl">
+                  <button
+                    type="button"
+                    className="mb-2 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs font-medium text-[var(--color-accent)] hover:bg-[var(--color-card-hover)]"
+                    onClick={() => {
+                      setSaveViewName(activeViewId ? savedViews.find((v) => v.id === activeViewId)?.name ?? '' : '');
+                      setSaveViewOpen(true);
+                      setShowViewsMenu(false);
+                    }}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Save current as view…
+                  </button>
+                  {savedViews.length === 0 && (
+                    <p className="px-2 py-2 text-[11px] text-[var(--color-muted-fg)]">
+                      No saved views yet. Configure columns/sort/filter, then save.
+                    </p>
+                  )}
+                  <ul className="max-h-48 space-y-0.5 overflow-auto">
+                    {savedViews.map((view) => (
+                      <li
+                        key={view.id}
+                        className={cn(
+                          'flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs',
+                          activeViewId === view.id && 'bg-[var(--color-accent-soft)]',
+                        )}
+                      >
+                        <button
+                          type="button"
+                          className="min-w-0 flex-1 truncate text-left hover:text-[var(--color-accent)]"
+                          onClick={() => handleApplyView(view)}
+                        >
+                          {view.name}
+                          {view.sortField && (
+                            <span className="ml-1 text-[10px] text-[var(--color-muted-fg)]">
+                              · {view.sortField}
+                              {view.sortDir === -1 ? ' ↓' : ' ↑'}
+                            </span>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded p-1 text-[var(--color-muted-fg)] hover:bg-[var(--color-card-hover)] hover:text-red-400"
+                          aria-label={`Delete view ${view.name}`}
+                          onClick={() => handleDeleteView(view.id)}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
             {docs.data && (
               <span className="font-mono text-[11px] text-[var(--color-muted-fg)]">
                 {docs.data.page.returned} rows · {docs.data.page.executionMs}ms
                 {docs.data.page.hasMore ? ' · more…' : ''}
+                {sortField && ` · sort ${sortField}${sortDir === -1 ? ' desc' : ' asc'}`}
               </span>
             )}
             <div className="flex-1" />
@@ -309,70 +743,254 @@ function DocumentsPanel({ cid, db, col }: { cid: string; db: string; col: string
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto">
-          {docs.isLoading && (
-            <div className="flex items-center gap-2 p-6 text-sm text-[var(--color-muted)]">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading documents…
-            </div>
+        {/*
+          Scrollport owns both axes. h-0 + flex-1 is the reliable flex height cap so
+          overflow-auto pins the horizontal scrollbar to the bottom of this pane
+          (not under the full table height).
+        */}
+        <div className="relative flex h-0 min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {/* Click-away for menus */}
+          {(showColumnsMenu || showViewsMenu) && (
+            <button
+              type="button"
+              className="fixed inset-0 z-20 cursor-default"
+              aria-label="Close menus"
+              onClick={() => {
+                setShowColumnsMenu(false);
+                setShowViewsMenu(false);
+              }}
+            />
           )}
-          {docs.isError && (
-            <div className="m-4 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
-              {(docs.error as Error).message}
-            </div>
-          )}
-          {docs.data && docs.data.data.length === 0 && (
-            <div className="p-12 text-center text-sm text-[var(--color-muted)]">
-              No documents match this filter.
-            </div>
-          )}
-          {docs.data && docs.data.data.length > 0 && (
-            <table className="w-full min-w-[640px] border-collapse text-left text-xs">
-              <thead className="sticky top-0 bg-[var(--color-sidebar)]">
-                <tr>
+
+          <div className="min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain">
+            {docs.isLoading && (
+              <div className="flex items-center gap-2 p-6 text-sm text-[var(--color-muted)]">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading documents…
+              </div>
+            )}
+            {docs.isError && (
+              <div className="m-4 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
+                {(docs.error as Error).message}
+              </div>
+            )}
+            {docs.data && docs.data.data.length === 0 && (
+              <div className="p-12 text-center text-sm text-[var(--color-muted)]">
+                No documents match this filter.
+                <div className="mt-2 text-xs text-[var(--color-muted-fg)]">
+                  Try clearing the filter or insert a document.
+                </div>
+              </div>
+            )}
+            {docs.data && docs.data.data.length > 0 && (
+              <table className="w-max min-w-full table-fixed border-collapse text-left text-xs">
+                <colgroup>
                   {columns.map((c) => (
-                    <th
-                      key={c}
-                      className="border-b border-[var(--color-border)] px-3 py-2 font-medium text-[var(--color-muted)]"
-                    >
-                      {c}
-                    </th>
+                    <col key={c} style={{ width: colWidth(c) }} />
                   ))}
-                </tr>
-              </thead>
-              <tbody>
-                {docs.data.data.map((doc, i) => (
-                  <tr
-                    key={i}
-                    className={cn(
-                      'cursor-pointer border-b border-[var(--color-border)] hover:bg-[var(--color-card-hover)]',
-                      selected && idToPath(selected._id) === idToPath(doc._id) && 'bg-[var(--color-accent-soft)]',
-                    )}
-                    onClick={() => openDoc(doc)}
-                  >
-                    {columns.map((c) => (
-                      <td key={c} className="max-w-[220px] truncate px-3 py-2 font-mono">
-                        <span className="mr-1">
-                          <span
-                            className={cn(
-                              'inline-block rounded px-1 text-[10px]',
-                              TYPE_TONES[bsonTypeOf(doc[c])] ?? TYPE_TONES.object,
+                </colgroup>
+                <thead className="sticky top-0 z-10 bg-[var(--color-sidebar)]">
+                  <tr>
+                    {columns.map((c) => {
+                      const isSorted = sortField === c;
+                      return (
+                        <th
+                          key={c}
+                          className={cn(
+                            'relative sticky top-0 border-b border-[var(--color-border)] bg-[var(--color-sidebar)] px-3 py-2 font-medium',
+                            'cursor-pointer select-none hover:text-[var(--color-accent)]',
+                            isSorted ? 'text-[var(--color-accent)]' : 'text-[var(--color-muted)]',
+                          )}
+                          style={{
+                            width: colWidth(c),
+                            minWidth: colWidth(c),
+                            maxWidth: colWidth(c),
+                          }}
+                          onClick={() => onHeaderClick(c)}
+                          title="Click to sort · drag edge to resize"
+                        >
+                          <span className="inline-flex max-w-full items-center gap-1 truncate pr-2">
+                            <span className="truncate">{c}</span>
+                            {isSorted && sortDir === 1 && (
+                              <ChevronUp className="h-3 w-3 shrink-0" />
                             )}
-                          >
-                            {bsonTypeOf(doc[c]).slice(0, 3)}
+                            {isSorted && sortDir === -1 && (
+                              <ChevronDown className="h-3 w-3 shrink-0" />
+                            )}
                           </span>
-                        </span>
-                        {formatCell(doc[c])}
-                      </td>
-                    ))}
+                          <span
+                            role="separator"
+                            aria-orientation="vertical"
+                            aria-label={`Resize ${c} column`}
+                            className="absolute top-0 right-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-[var(--color-accent)]/40 active:bg-[var(--color-accent)]/60"
+                            onMouseDown={(e) => startResize(c, e)}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </th>
+                      );
+                    })}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {docs.data.data.map((doc, i) => (
+                    <tr
+                      key={i}
+                      className={cn(
+                        'group/row cursor-pointer border-b border-[var(--color-border)] hover:bg-[var(--color-card-hover)]',
+                        selected &&
+                          idToPath(selected._id) === idToPath(doc._id) &&
+                          'bg-[var(--color-accent-soft)]',
+                      )}
+                      onClick={() => openDoc(doc)}
+                    >
+                      {columns.map((c) => (
+                        <td
+                          key={c}
+                          className="group/cell relative overflow-hidden px-3 py-2 font-mono"
+                          style={{
+                            width: colWidth(c),
+                            minWidth: colWidth(c),
+                            maxWidth: colWidth(c),
+                          }}
+                          title={
+                            c === '_id'
+                              ? 'Right-click to copy'
+                              : 'Double-click to edit · right-click to copy'
+                          }
+                          onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            openDoc(doc);
+                            if (c !== '_id') openFieldEdit(c, doc[c]);
+                          }}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setContextMenu({
+                              x: e.clientX,
+                              y: e.clientY,
+                              field: c,
+                              value: doc[c],
+                            });
+                          }}
+                        >
+                          <div className="flex min-w-0 items-center gap-1">
+                            <span
+                              className={cn(
+                                'inline-block shrink-0 rounded px-1 text-[10px]',
+                                TYPE_TONES[bsonTypeOf(doc[c])] ?? TYPE_TONES.object,
+                              )}
+                            >
+                              {bsonTypeOf(doc[c]).slice(0, 3)}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate">{formatCell(doc[c])}</span>
+                            <span className="ml-auto hidden shrink-0 items-center gap-0.5 group-hover/cell:inline-flex">
+                              <button
+                                type="button"
+                                className="rounded p-0.5 text-[var(--color-muted-fg)] hover:bg-[var(--color-input)] hover:text-[var(--color-accent)]"
+                                title="Copy as string"
+                                aria-label={`Copy ${c} as string`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void copyValue('string', doc[c]);
+                                }}
+                              >
+                                <Copy className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded p-0.5 text-[var(--color-muted-fg)] hover:bg-[var(--color-input)] hover:text-[var(--color-accent)]"
+                                title='Copy as Mongo value (ObjectId("…"))'
+                                aria-label={`Copy ${c} as Mongo shell value`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void copyValue('mongo', doc[c]);
+                                }}
+                              >
+                                <BracesIcon className="h-3 w-3" />
+                              </button>
+                            </span>
+                          </div>
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {contextMenu && (
+            <>
+              <button
+                type="button"
+                className="fixed inset-0 z-40 cursor-default"
+                aria-label="Close context menu"
+                onClick={() => setContextMenu(null)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setContextMenu(null);
+                }}
+              />
+              <div
+                role="menu"
+                className="fixed z-50 min-w-[200px] rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] py-1 shadow-xl"
+                style={{
+                  left: Math.min(contextMenu.x, window.innerWidth - 220),
+                  top: Math.min(contextMenu.y, window.innerHeight - 160),
+                }}
+              >
+                <div className="border-b border-[var(--color-border)] px-3 py-1.5 font-mono text-[10px] text-[var(--color-muted-fg)]">
+                  {contextMenu.field}
+                </div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-[var(--color-card-hover)]"
+                  onClick={() => void copyValue('string', contextMenu.value)}
+                >
+                  <Copy className="h-3.5 w-3.5 text-[var(--color-muted)]" />
+                  Copy as string
+                  <span className="ml-auto max-w-[100px] truncate font-mono text-[10px] text-[var(--color-muted-fg)]">
+                    {valueAsString(contextMenu.value)}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-[var(--color-card-hover)]"
+                  onClick={() => void copyValue('mongo', contextMenu.value)}
+                >
+                  <BracesIcon className="h-3.5 w-3.5 text-[var(--color-muted)]" />
+                  Copy as Mongo value
+                </button>
+                <div className="border-t border-[var(--color-border)] px-3 py-1.5 font-mono text-[10px] text-[var(--color-muted-fg)]">
+                  {valueAsMongoShell(contextMenu.value)}
+                </div>
+                {contextMenu.field !== '_id' && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="flex w-full items-center gap-2 border-t border-[var(--color-border)] px-3 py-2 text-left text-xs hover:bg-[var(--color-card-hover)]"
+                    onClick={() => {
+                      if (selected) openFieldEdit(contextMenu.field, contextMenu.value);
+                      setContextMenu(null);
+                    }}
+                  >
+                    <Pencil className="h-3.5 w-3.5 text-[var(--color-muted)]" />
+                    Edit field…
+                  </button>
+                )}
+              </div>
+            </>
           )}
+
+          <p className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2 text-[11px] text-[var(--color-muted-fg)]">
+            Drag column edges to resize · right-click or hover icons to copy · headers sort · Views
+            save widths
+          </p>
         </div>
       </div>
 
-      <aside className="flex w-full flex-col border-t border-[var(--color-border)] lg:w-[420px] lg:border-l lg:border-t-0">
+      <aside className="flex w-full min-h-0 shrink-0 flex-col overflow-hidden border-t border-[var(--color-border)] lg:h-full lg:w-[420px] lg:border-l lg:border-t-0">
         {!selected ? (
           <div className="flex flex-1 flex-col items-center justify-center p-8 text-center text-sm text-[var(--color-muted)]">
             <Braces className="mb-3 h-8 w-8 opacity-40" />
@@ -380,7 +998,7 @@ function DocumentsPanel({ cid, db, col }: { cid: string; db: string; col: string
           </div>
         ) : (
           <>
-            <div className="flex items-center gap-2 border-b border-[var(--color-border)] p-2">
+            <div className="flex shrink-0 items-center gap-2 border-b border-[var(--color-border)] p-2">
               <Button
                 size="sm"
                 variant={editMode === 'json' ? 'primary' : 'ghost'}
@@ -415,26 +1033,67 @@ function DocumentsPanel({ cid, db, col }: { cid: string; db: string; col: string
             </div>
             {editMode === 'json' ? (
               <textarea
-                className="min-h-[320px] flex-1 resize-none bg-[var(--color-background)] p-3 font-mono text-xs leading-relaxed outline-none"
+                className="min-h-0 flex-1 resize-none bg-[var(--color-background)] p-3 font-mono text-xs leading-relaxed outline-none"
                 value={jsonText}
                 onChange={(e) => setJsonText(e.target.value)}
                 spellCheck={false}
                 aria-label="Document JSON"
               />
             ) : (
-              <div className="flex-1 overflow-auto p-3">
+              <div className="min-h-0 flex-1 overflow-auto p-3">
                 <FieldTree
                   doc={selected}
                   onConvert={(path) => {
                     setConvertPath(path);
                     setConvertType('string');
                   }}
+                  onEdit={(path, value) => openFieldEdit(path, value)}
+                  onCopyString={(value) => void copyValue('string', value)}
+                  onCopyMongo={(value) => void copyValue('mongo', value)}
                 />
               </div>
             )}
           </>
         )}
       </aside>
+
+      <FieldEditDialog
+        open={!!fieldEdit}
+        path={fieldEdit?.path ?? ''}
+        currentValue={
+          fieldEdit && selected ? getNested(selected, fieldEdit.path) : fieldEdit?.value
+        }
+        saving={setFieldMut.isPending}
+        onClose={() => setFieldEdit(null)}
+        onSave={(payload) => setFieldMut.mutate(payload)}
+      />
+
+      <Dialog
+        open={saveViewOpen}
+        onClose={() => setSaveViewOpen(false)}
+        title="Save collection view"
+      >
+        <p className="mb-3 text-sm text-[var(--color-muted)]">
+          Saves visible columns, sort, and filter for this collection on this browser.
+        </p>
+        <Input
+          autoFocus
+          placeholder="View name"
+          value={saveViewName}
+          onChange={(e) => setSaveViewName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && saveViewName.trim()) handleSaveView();
+          }}
+        />
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" onClick={() => setSaveViewOpen(false)}>
+            Cancel
+          </Button>
+          <Button disabled={!saveViewName.trim()} onClick={handleSaveView}>
+            Save view
+          </Button>
+        </div>
+      </Dialog>
 
       <Dialog open={showInsert} onClose={() => setShowInsert(false)} title="Insert document" className="max-w-xl">
         <textarea
@@ -487,10 +1146,16 @@ function FieldTree({
   doc,
   path = '',
   onConvert,
+  onEdit,
+  onCopyString,
+  onCopyMongo,
 }: {
   doc: unknown;
   path?: string;
   onConvert: (path: string) => void;
+  onEdit: (path: string, value: unknown) => void;
+  onCopyString: (value: unknown) => void;
+  onCopyMongo: (value: unknown) => void;
 }) {
   if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) {
     return (
@@ -510,9 +1175,17 @@ function FieldTree({
           Array.isArray(v) ||
           (typeof v === 'object' &&
             v !== null &&
-            ('$oid' in v || '$date' in v || '$numberLong' in v || '$numberDecimal' in v));
+            ('$oid' in v ||
+              '$date' in v ||
+              '$numberLong' in v ||
+              '$numberDecimal' in v ||
+              '$numberInt' in v ||
+              '$numberDouble' in v));
         return (
-          <li key={p} className="rounded-lg border border-[var(--color-border)]/60 px-2 py-1.5">
+          <li
+            key={p}
+            className="group/field rounded-lg border border-[var(--color-border)]/60 px-2 py-1.5"
+          >
             <div className="flex items-center gap-2">
               <span className="font-mono text-xs font-medium text-[var(--color-accent)]">{k}</span>
               <Badge className={TYPE_TONES[bsonTypeOf(v)]}>{bsonTypeOf(v)}</Badge>
@@ -521,6 +1194,40 @@ function FieldTree({
                   <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--color-muted)]">
                     {formatCell(v)}
                   </span>
+                  <span className="hidden items-center gap-0.5 group-hover/field:inline-flex">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-1.5"
+                      aria-label={`Copy ${p} as string`}
+                      title="Copy as string"
+                      onClick={() => onCopyString(v)}
+                    >
+                      <Copy className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-1.5"
+                      aria-label={`Copy ${p} as Mongo value`}
+                      title="Copy as Mongo value"
+                      onClick={() => onCopyMongo(v)}
+                    >
+                      <BracesIcon className="h-3 w-3" />
+                    </Button>
+                  </span>
+                  {p !== '_id' && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-[10px]"
+                      aria-label={`Edit ${p}`}
+                      onClick={() => onEdit(p, v)}
+                    >
+                      <Pencil className="h-3 w-3" />
+                      Edit
+                    </Button>
+                  )}
                   <Button size="sm" variant="ghost" className="h-7 text-[10px]" onClick={() => onConvert(p)}>
                     type
                   </Button>
@@ -529,7 +1236,14 @@ function FieldTree({
             </div>
             {!isLeaf && (
               <div className="ml-3 mt-1 border-l border-[var(--color-border)] pl-2">
-                <FieldTree doc={v} path={p} onConvert={onConvert} />
+                <FieldTree
+                  doc={v}
+                  path={p}
+                  onConvert={onConvert}
+                  onEdit={onEdit}
+                  onCopyString={onCopyString}
+                  onCopyMongo={onCopyMongo}
+                />
               </div>
             )}
           </li>

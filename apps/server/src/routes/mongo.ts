@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import {
   AggregateBodySchema,
   ConvertFieldBodySchema,
+  SetFieldBodySchema,
   CreateCollectionBodySchema,
   CreateDatabaseBodySchema,
   CreateIndexBodySchema,
@@ -237,6 +238,22 @@ export function mongoRoutes(ctx: AppContext) {
     const col = client.db(c.req.param('db')).collection(c.req.param('col'));
     const idEjson = resolveId(c.req.param('id'), c.req.query('id'));
     const data = await new DocumentService(col).convertField(idEjson, body.path, body.toType);
+    return c.json({ data });
+  });
+
+  r.post('/c/:cid/db/:db/col/:col/documents/:id/set-field', async (c) => {
+    const cid = c.req.param('cid');
+    requireWritable(ctx, cid);
+    const body = SetFieldBodySchema.parse(await c.req.json());
+    const { client } = requireConn(ctx, cid);
+    const col = client.db(c.req.param('db')).collection(c.req.param('col'));
+    const idEjson = resolveId(c.req.param('id'), c.req.query('id'));
+    const data = await new DocumentService(col).setField(
+      idEjson,
+      body.path,
+      body.type,
+      body.value,
+    );
     return c.json({ data });
   });
 

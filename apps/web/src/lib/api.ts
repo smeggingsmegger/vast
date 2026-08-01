@@ -70,10 +70,10 @@ export const api = {
     }),
   deleteConnection: (id: string) =>
     request<{ ok: boolean }>(`/api/v1/connections/${id}`, { method: 'DELETE' }),
-  testUri: (uri: string) =>
-    request<{ data: TestConnectionResult }>('/api/v1/connections/test', {
+  testUri: (uri: string, ssh?: CreateConnectionInput['ssh']) =>
+    request<{ data: TestConnectionResult & { viaSsh?: boolean } }>('/api/v1/connections/test', {
       method: 'POST',
-      body: JSON.stringify({ uri }),
+      body: JSON.stringify({ uri, ssh }),
     }),
   testConnection: (id: string) =>
     request<{ data: TestConnectionResult }>(`/api/v1/connections/${id}/test`, {
@@ -187,6 +187,18 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ path, toType }) },
     ),
 
+  setField: (
+    cid: string,
+    db: string,
+    col: string,
+    id: string,
+    body: { path: string; type: string; value: unknown },
+  ) =>
+    request<{ data: Record<string, unknown> }>(
+      `/api/v1/c/${cid}/db/${encodeURIComponent(db)}/col/${encodeURIComponent(col)}/documents/${id}/set-field`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+
   deleteDocument: (cid: string, db: string, col: string, id: string) =>
     request<{ data: { deleted: boolean } }>(
       `/api/v1/c/${cid}/db/${encodeURIComponent(db)}/col/${encodeURIComponent(col)}/documents/${id}`,
@@ -278,22 +290,61 @@ export function idToPath(id: unknown): string {
     return String((id as { $oid: string }).$oid);
   }
   if (typeof id === 'string' || typeof id === 'number') return String(id);
-  return encodeURIComponent(JSON.stringify(id));
+  try {
+    return encodeURIComponent(JSON.stringify(id));
+  } catch {
+    return String(id);
+  }
 }
 
+/** Normalize EJSON date forms (string, epoch ms, or { $numberLong }). */
+export function formatEjsonDate(dateVal: unknown): string {
+  if (typeof dateVal === 'string') return dateVal;
+  if (typeof dateVal === 'number' && Number.isFinite(dateVal)) {
+    const d = new Date(dateVal);
+    return Number.isNaN(d.getTime()) ? String(dateVal) : d.toISOString();
+  }
+  if (dateVal && typeof dateVal === 'object') {
+    if ('$numberLong' in dateVal) {
+      const ms = Number((dateVal as { $numberLong: string }).$numberLong);
+      const d = new Date(ms);
+      return Number.isNaN(d.getTime())
+        ? String((dateVal as { $numberLong: string }).$numberLong)
+        : d.toISOString();
+    }
+    if ('$numberInt' in dateVal) {
+      const ms = Number((dateVal as { $numberInt: string }).$numberInt);
+      const d = new Date(ms);
+      return Number.isNaN(d.getTime()) ? String(ms) : d.toISOString();
+    }
+  }
+  try {
+    return JSON.stringify(dateVal);
+  } catch {
+    return String(dateVal);
+  }
+}
+
+/**
+ * Display string for a cell value. Must never throw — grid rendering depends on it.
+ * Handles canonical EJSON (ObjectId, Date with $numberLong, Long, Decimal, Int).
+ */
 export function formatCell(value: unknown): string {
   if (value === null) return 'null';
   if (value === undefined) return '';
   if (typeof value === 'object') {
     if (value && '$oid' in (value as object)) return String((value as { $oid: string }).$oid);
     if (value && '$date' in (value as object)) {
-      const d = (value as { $date: string | number }).$date;
-      return typeof d === 'string' ? d : new Date(d).toISOString();
+      return formatEjsonDate((value as { $date: unknown }).$date);
     }
     if (value && '$numberDecimal' in (value as object))
       return String((value as { $numberDecimal: string }).$numberDecimal);
     if (value && '$numberLong' in (value as object))
       return String((value as { $numberLong: string }).$numberLong);
+    if (value && '$numberInt' in (value as object))
+      return String((value as { $numberInt: string }).$numberInt);
+    if (value && '$numberDouble' in (value as object))
+      return String((value as { $numberDouble: string }).$numberDouble);
     try {
       return JSON.stringify(value);
     } catch {
@@ -313,6 +364,7 @@ export function bsonTypeOf(value: unknown): string {
     if ('$numberDecimal' in (value as object)) return 'decimal';
     if ('$numberLong' in (value as object)) return 'long';
     if ('$numberInt' in (value as object)) return 'int';
+    if ('$numberDouble' in (value as object)) return 'double';
     if ('$binary' in (value as object)) return 'binary';
     return 'object';
   }

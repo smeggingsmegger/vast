@@ -10,6 +10,7 @@ export function SettingsPage() {
   const { theme, setTheme } = useUiStore();
 
   return (
+    <div className="h-full min-h-0 overflow-auto">
     <div className="mx-auto max-w-2xl p-6 md:p-10">
       <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
       <p className="mt-1 text-sm text-[var(--color-muted)]">Appearance and runtime information.</p>
@@ -54,6 +55,7 @@ export function SettingsPage() {
           </Row>
         </dl>
       </section>
+    </div>
     </div>
   );
 }

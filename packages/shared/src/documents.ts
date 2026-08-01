@@ -33,6 +33,27 @@ export const ConvertFieldBodySchema = z.object({
   toType: z.enum(['string', 'int', 'long', 'double', 'decimal', 'bool', 'date', 'objectId', 'null']),
 });
 
+export const FieldEditTypeSchema = z.enum([
+  'string',
+  'int',
+  'long',
+  'double',
+  'decimal',
+  'bool',
+  'date',
+  'objectId',
+  'null',
+  'json',
+]);
+
+/** Single-field update from type-aware editor. */
+export const SetFieldBodySchema = z.object({
+  path: z.string().min(1),
+  type: FieldEditTypeSchema,
+  /** Raw editor value (string/boolean/null/json string). */
+  value: z.unknown(),
+});
+
 export const AggregateBodySchema = z.object({
   pipeline: z.array(z.unknown()),
   allowDiskUse: z.boolean().optional(),

@@ -4,3 +4,5 @@ packages:
 allowBuilds:
   esbuild: true
   "@tailwindcss/oxide": true
+  ssh2: true
+  cpu-features: true

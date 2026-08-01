@@ -7,6 +7,7 @@ import { MongoClient, ObjectId, Decimal128, Long } from 'mongodb';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ConnectionPublic } from '@vast/shared';
 import { ConnectionManager } from '@vast/mongo-core';
 import { createApp } from './app.js';
 import { ConnectionStore } from './store/connection-store.js';
@@ -363,6 +364,151 @@ describe.skipIf(!available)('Mongo integration via HTTP API', () => {
       method: 'DELETE',
       body: JSON.stringify({ confirmName: restoreDb }),
     });
+  });
+
+  it('set-field updates a single field with type fidelity', async () => {
+    const ins = await api(`/api/v1/c/${connectionId}/db/${DB}/col/users/documents`, {
+      method: 'POST',
+      body: JSON.stringify({
+        document: { name: 'field-edit', score: { $numberInt: '1' }, tag: 'old' },
+      }),
+    });
+    expect(ins.status).toBe(201);
+    const id = (ins.json as { data: { _id: { $oid: string } } }).data._id.$oid;
+
+    const setStr = await api(
+      `/api/v1/c/${connectionId}/db/${DB}/col/users/documents/${id}/set-field`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ path: 'tag', type: 'string', value: 'new-tag' }),
+      },
+    );
+    expect(setStr.status).toBe(200);
+    expect((setStr.json as { data: { tag: string } }).data.tag).toBe('new-tag');
+
+    const setLong = await api(
+      `/api/v1/c/${connectionId}/db/${DB}/col/users/documents/${id}/set-field`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          path: 'bigNum',
+          type: 'long',
+          value: '9007199254740993',
+        }),
+      },
+    );
+    expect(setLong.status).toBe(200);
+    expect((setLong.json as { data: { bigNum: { $numberLong: string } } }).data.bigNum).toEqual({
+      $numberLong: '9007199254740993',
+    });
+
+    const found = await api(`/api/v1/c/${connectionId}/db/${DB}/col/users/find`, {
+      method: 'POST',
+      body: JSON.stringify({ filter: { _id: { $oid: id } }, limit: 1 }),
+    });
+    const row = (found.json as { data: { tag: string; bigNum: { $numberLong: string } }[] }).data[0]!;
+    expect(row.tag).toBe('new-tag');
+    expect(row.bigNum).toEqual({ $numberLong: '9007199254740993' });
+  });
+
+  it('set-field type json preserves ObjectId/Long inside arrays (EJSON revive)', async () => {
+    const hex = '626dd5775947fc3a08b2c6dc';
+    const exactLong = '9007199254740993';
+    const ins = await api(`/api/v1/c/${connectionId}/db/${DB}/col/users/documents`, {
+      method: 'POST',
+      body: JSON.stringify({
+        document: {
+          name: 'json-arr',
+          refs: [{ $oid: hex }, { $numberLong: exactLong }],
+        },
+      }),
+    });
+    expect(ins.status).toBe(201);
+    const inserted = (
+      ins.json as {
+        data: {
+          _id: { $oid: string };
+          refs: [{ $oid: string }, { $numberLong: string }];
+        };
+      }
+    ).data;
+    expect(inserted.refs[0]).toEqual({ $oid: hex });
+    expect(inserted.refs[1]).toEqual({ $numberLong: exactLong });
+    const id = inserted._id.$oid;
+
+    // No-op style save: re-send EJSON text as the UI would after opening the json editor
+    const ejsonText = JSON.stringify(inserted.refs);
+    const setJson = await api(
+      `/api/v1/c/${connectionId}/db/${DB}/col/users/documents/${id}/set-field`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ path: 'refs', type: 'json', value: ejsonText }),
+      },
+    );
+    expect(setJson.status).toBe(200);
+    const after = (
+      setJson.json as {
+        data: { refs: [{ $oid: string }, { $numberLong: string }] };
+      }
+    ).data;
+    // Must remain canonical typed wrappers — not plain demoted objects that fail as ObjectId
+    expect(after.refs[0]).toEqual({ $oid: hex });
+    expect(after.refs[1]).toEqual({ $numberLong: exactLong });
+
+    const found = await api(`/api/v1/c/${connectionId}/db/${DB}/col/users/find`, {
+      method: 'POST',
+      body: JSON.stringify({ filter: { _id: { $oid: id } }, limit: 1 }),
+    });
+    const row = (
+      found.json as { data: { refs: [{ $oid: string }, { $numberLong: string }] }[] }
+    ).data[0]!;
+    expect(row.refs[0]).toEqual({ $oid: hex });
+    expect(row.refs[1]).toEqual({ $numberLong: exactLong });
+  });
+
+  it('stores secrets encrypted and never returns them in list', async () => {
+    const secretUri = 'mongodb://secretuser:SuperSecretPassword99@localhost:27027/admin';
+    const created = await api('/api/v1/connections', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'secret-check',
+        uri: secretUri,
+        color: 'red',
+        readOnly: true,
+        ssh: {
+          enabled: true,
+          host: 'bastion.example',
+          port: 22,
+          username: 'deploy',
+          authMethod: 'password',
+          password: 'ssh-pass-should-not-leak',
+          destinationHost: '127.0.0.1',
+          destinationPort: 27017,
+        },
+      }),
+    });
+    expect(created.status).toBe(201);
+    const pub = (created.json as { data: ConnectionPublic & { ssh?: { hasPassword?: boolean } } })
+      .data;
+    const payload = JSON.stringify(pub);
+    expect(payload).not.toContain('SuperSecretPassword99');
+    expect(payload).not.toContain('ssh-pass-should-not-leak');
+    expect(payload).not.toContain('secretuser:Super');
+    expect(pub.uriDisplay).toContain('***');
+    expect(pub.ssh?.enabled).toBe(true);
+    expect(pub.ssh?.hasPassword).toBe(true);
+    expect(pub.ssh?.host).toBe('bastion.example');
+
+    // On-disk file must not contain plaintext secrets
+    const raw = await import('node:fs').then((fs) =>
+      fs.readFileSync(`${dataDir}/connections.json`, 'utf8'),
+    );
+    expect(raw).not.toContain('SuperSecretPassword99');
+    expect(raw).not.toContain('ssh-pass-should-not-leak');
+    expect(raw).toContain('uriEncrypted');
+    expect(raw).toContain('passwordEncrypted');
+
+    await api(`/api/v1/connections/${pub.id}`, { method: 'DELETE' });
   });
 
   it('rejects writes on read-only connection', async () => {

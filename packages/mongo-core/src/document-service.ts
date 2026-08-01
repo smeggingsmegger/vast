@@ -3,6 +3,7 @@ import { ObjectId } from 'bson';
 import { ErrorCode, VastError } from '@vast/shared';
 import { fromEJSON, toEJSON } from './ejson.js';
 import { convertFieldValue, getByPath, setByPath, type ConvertibleType } from './type-convert.js';
+import { parseFieldEditorValue, type FieldEditType } from './field-value.js';
 
 export interface FindOptions {
   filter?: unknown;
@@ -128,6 +129,38 @@ export class DocumentService {
     const result = await this.collection.updateOne({ _id } as Filter<Document>, update);
     if (result.matchedCount === 0) {
       throw new VastError(ErrorCode.NOT_FOUND, 'Document not found');
+    }
+    const updated = await this.collection.findOne({ _id } as Filter<Document>);
+    return toEJSON(updated);
+  }
+
+  /**
+   * Set a single field from the type-aware editor (parses raw UI value → BSON).
+   */
+  async setField(
+    idEjson: unknown,
+    path: string,
+    type: FieldEditType,
+    rawValue: unknown,
+  ): Promise<unknown> {
+    const _id = fromEJSON(idEjson);
+    const parsed = parseFieldEditorValue(rawValue, type);
+    if (type === 'null') {
+      const result = await this.collection.updateOne(
+        { _id } as Filter<Document>,
+        { $set: { [path]: null } },
+      );
+      if (result.matchedCount === 0) {
+        throw new VastError(ErrorCode.NOT_FOUND, 'Document not found');
+      }
+    } else {
+      const result = await this.collection.updateOne(
+        { _id } as Filter<Document>,
+        { $set: { [path]: parsed } },
+      );
+      if (result.matchedCount === 0) {
+        throw new VastError(ErrorCode.NOT_FOUND, 'Document not found');
+      }
     }
     const updated = await this.collection.findOne({ _id } as Filter<Document>);
     return toEJSON(updated);

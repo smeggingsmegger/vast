@@ -77,8 +77,10 @@ test.describe('Workbench journey', () => {
     await expect(page.getByText('e2e-user').first()).toBeVisible({ timeout: 15_000 });
 
     await page.getByText('e2e-user').first().click();
+    // Default inspector is Fields view — switch to JSON for full-doc edit
+    await page.getByRole('button', { name: 'JSON', exact: true }).click();
     const editor = page.getByLabel('Document JSON');
-    await expect(editor).toBeVisible();
+    await expect(editor).toBeVisible({ timeout: 10_000 });
     const raw = await editor.inputValue();
     const doc = JSON.parse(raw) as { age: number };
     doc.age = 43;

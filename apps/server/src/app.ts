@@ -13,7 +13,11 @@ import {
   VastError,
   type MetaResponse,
 } from '@vast/shared';
-import { ConnectionManager, isLikelyMongoUri } from '@vast/mongo-core';
+import {
+  buildSshTunnelConfigFromParts,
+  ConnectionManager,
+  isLikelyMongoUri,
+} from '@vast/mongo-core';
 import type { AppContext } from './app-context.js';
 import {
   authMiddleware,
@@ -168,10 +172,18 @@ export function createApp(ctx: AppContext) {
     }
     const updated = store.update(id, body);
     if (!updated) throw new VastError(ErrorCode.NOT_FOUND, 'Connection not found');
-    if (connections.get(id) && (body.uri !== undefined || body.readOnly !== undefined)) {
+    if (
+      connections.get(id) &&
+      (body.uri !== undefined || body.readOnly !== undefined || body.ssh !== undefined)
+    ) {
       const uri = store.getUri(id)!;
       const stored = store.get(id)!;
-      await connections.connect(id, uri, { readOnly: stored.readOnly || config.readOnly });
+      const sshDec = store.getSsh(id);
+      const ssh = sshDec ? buildSshTunnelConfigFromParts(sshDec, uri) : undefined;
+      await connections.connect(id, uri, {
+        readOnly: stored.readOnly || config.readOnly,
+        ssh,
+      });
     }
     const status = connections.get(id) ? 'connected' : 'disconnected';
     const stored = store.get(id)!;
@@ -191,7 +203,25 @@ export function createApp(ctx: AppContext) {
     if (!isLikelyMongoUri(body.uri)) {
       throw new VastError(ErrorCode.VALIDATION, 'URI must start with mongodb:// or mongodb+srv://');
     }
-    const result = await connections.test(body.uri);
+    const ssh =
+      body.ssh?.enabled
+        ? buildSshTunnelConfigFromParts(
+            {
+              enabled: true,
+              host: body.ssh.host,
+              port: body.ssh.port,
+              username: body.ssh.username,
+              authMethod: body.ssh.authMethod,
+              password: body.ssh.password,
+              privateKey: body.ssh.privateKey,
+              passphrase: body.ssh.passphrase,
+              destinationHost: body.ssh.destinationHost,
+              destinationPort: body.ssh.destinationPort,
+            },
+            body.uri,
+          )
+        : undefined;
+    const result = await connections.test(body.uri, { ssh });
     return c.json({ data: result });
   });
 
@@ -199,7 +229,9 @@ export function createApp(ctx: AppContext) {
     const id = c.req.param('id');
     const uri = store.getUri(id);
     if (!uri) throw new VastError(ErrorCode.NOT_FOUND, 'Connection not found');
-    const result = await connections.test(uri);
+    const sshDec = store.getSsh(id);
+    const ssh = sshDec ? buildSshTunnelConfigFromParts(sshDec, uri) : undefined;
+    const result = await connections.test(uri, { ssh });
     return c.json({ data: result });
   });
 
@@ -209,8 +241,11 @@ export function createApp(ctx: AppContext) {
     const uri = store.getUri(id);
     if (!stored || !uri) throw new VastError(ErrorCode.NOT_FOUND, 'Connection not found');
     try {
+      const sshDec = store.getSsh(id);
+      const ssh = sshDec ? buildSshTunnelConfigFromParts(sshDec, uri) : undefined;
       await connections.connect(id, uri, {
         readOnly: stored.readOnly || config.readOnly,
+        ssh,
       });
       store.touch(id);
       return c.json({ data: store.toPublic(stored, 'connected') });
