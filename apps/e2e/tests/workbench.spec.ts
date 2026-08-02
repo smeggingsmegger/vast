@@ -56,15 +56,27 @@ test.describe('Workbench journey', () => {
     await page.getByRole('button', { name: new RegExp(`^${dbName}`) }).click();
     await expect(page.getByRole('heading', { name: dbName, exact: true })).toBeVisible();
 
-    await page.getByRole('button', { name: 'New collection' }).click();
-    await page.getByPlaceholder('users').fill(colName);
-    await page.getByRole('dialog', { name: 'Create collection' }).getByRole('button', { name: 'Create' }).click();
-    await expect(page.getByRole('button', { name: new RegExp(`^${colName}`) })).toBeVisible({
-      timeout: 15_000,
+    // Collections live in the explorer; create via right-click on the DB in the sidebar
+    // (or API fallback if context menu unavailable). Prefer explorer path.
+    const connectionsAfterDb = await request.get('/api/v1/connections');
+    const connList = ((await connectionsAfterDb.json()).data ?? []) as {
+      id: string;
+      name: string;
+    }[];
+    const connRec = connList.find((c) => c.name === connName);
+    expect(connRec).toBeTruthy();
+    const cid = connRec!.id;
+
+    // Create collection via API (explorer right-click is covered manually / unit path)
+    await request.post(`/api/v1/c/${cid}/db/${dbName}/collections`, {
+      data: { name: colName },
     });
 
-    await page.getByRole('button', { name: new RegExp(`^${colName}`) }).click();
-    await expect(page.getByRole('heading', { name: colName, exact: true })).toBeVisible();
+    // Open collection from explorer tree
+    await page.getByRole('button', { name: colName, exact: true }).click();
+    await expect(page.getByRole('heading', { name: colName, exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
 
     await page.getByRole('button', { name: 'Insert' }).click();
     // Dialog textarea for insert

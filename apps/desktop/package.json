@@ -9,6 +9,7 @@
     "dev": "tauri dev",
     "build": "bash ../../scripts/desktop-package-sidecar.sh && tauri build",
     "build:debug": "bash ../../scripts/desktop-package-sidecar.sh && tauri build --debug",
+    "build:app": "tauri build",
     "info": "tauri info",
     "typecheck": "echo 'ok'",
     "lint": "echo 'ok'"

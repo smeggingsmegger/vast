@@ -15,7 +15,7 @@ export function AppShell() {
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: 60_000 });
 
   return (
-    <div className="flex h-full max-h-full flex-col overflow-hidden">
+    <div className="flex h-full max-h-full min-h-0 flex-col overflow-hidden">
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-card)] px-3">
         <Button
           variant="ghost"
@@ -73,9 +73,10 @@ export function AppShell() {
           </Button>
         </Link>
       </header>
-      <div className="flex min-h-0 flex-1">
+      {/* min-h-0 + overflow-hidden: required for WKWebView/Tauri nested scroll */}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         {sidebarOpen && (
-          <aside className="flex w-64 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-sidebar)] md:w-72">
+          <aside className="flex h-full min-h-0 w-64 shrink-0 flex-col overflow-hidden border-r border-[var(--color-border)] bg-[var(--color-sidebar)] md:w-72">
             <ExplorerSidebar />
           </aside>
         )}
