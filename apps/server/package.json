@@ -14,7 +14,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:integration": "vitest run src/integration.mongo.test.ts"
+    "test:integration": "vitest run src/integration.mongo.test.ts",
+    "test:scenarios": "vitest run src/scenarios.mongo.test.ts --reporter=verbose"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.1",

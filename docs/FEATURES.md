@@ -72,3 +72,4 @@
 - [x] Tauri desktop scaffold
 - [x] Unit + real-Mongo integration + Playwright E2E
 - [x] Real SSH tunnel integration tests (when bastion available)
+- [x] **Fixture-driven Mongo scenarios** (≥300 cases) via HTTP API + driver integrity (`pnpm test:scenarios`)

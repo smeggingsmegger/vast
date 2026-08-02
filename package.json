@@ -20,6 +20,7 @@
     "test": "pnpm -r --filter=./packages/* test",
     "test:unit": "pnpm --filter @vast/shared test && pnpm --filter @vast/mongo-core test",
     "test:integration": "MONGO_URI=${MONGO_URI:-mongodb://127.0.0.1:27027} pnpm --filter @vast/server test",
+    "test:scenarios": "MONGO_URI=${MONGO_URI:-mongodb://127.0.0.1:27027} pnpm --filter @vast/server test:scenarios",
     "test:e2e": "MONGO_URI=${MONGO_URI:-mongodb://127.0.0.1:27027} pnpm --filter @vast/e2e test",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
