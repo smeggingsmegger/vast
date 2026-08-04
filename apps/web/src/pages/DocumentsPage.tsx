@@ -47,6 +47,7 @@ import {
   QueryResultPanel,
   type QueryResultSummary,
 } from '@/components/documents/QueryResultPanel';
+import { InsertDocumentDialog } from '@/components/documents/InsertDocumentDialog';
 import {
   defaultFindScript,
   filterFromParsed,
@@ -266,7 +267,8 @@ function DocumentsPanel({
   const [editMode, setEditMode] = useState<'tree' | 'json'>('json');
   const [jsonText, setJsonText] = useState('');
   const [showInsert, setShowInsert] = useState(false);
-  const [insertText, setInsertText] = useState('{\n  \n}');
+  const [insertTemplate, setInsertTemplate] = useState<Record<string, unknown> | null>(null);
+  const [insertTemplateLoading, setInsertTemplateLoading] = useState(false);
   const [convertPath, setConvertPath] = useState<string | null>(null);
   const [convertType, setConvertType] = useState('string');
   const [fieldEdit, setFieldEdit] = useState<{ path: string; value: unknown } | null>(null);
@@ -821,17 +823,41 @@ function DocumentsPanel({
   });
 
   const insert = useMutation({
-    mutationFn: async () => {
-      const doc = JSON.parse(insertText);
-      return api.insertDocument(cid, db, col, doc);
-    },
+    mutationFn: async (document: unknown) => api.insertDocument(cid, db, col, document),
     onSuccess: () => {
       toast.success('Document inserted');
       setShowInsert(false);
+      setInsertTemplate(null);
       void qc.invalidateQueries({ queryKey: ['docs', cid, db, col] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
+
+  /** Open insert dialog; load most recent doc as form template when possible. */
+  async function openInsertDialog() {
+    setShowInsert(true);
+    setInsertTemplateLoading(true);
+    setInsertTemplate(null);
+    try {
+      // Prefer a row already on screen; otherwise fetch newest by _id
+      const existing = docs.data?.data?.[0] as Record<string, unknown> | undefined;
+      if (existing) {
+        setInsertTemplate(existing);
+        return;
+      }
+      const res = await api.find(cid, db, col, {
+        filter: {},
+        sort: { _id: -1 },
+        limit: 1,
+      });
+      const latest = res.data?.[0] as Record<string, unknown> | undefined;
+      setInsertTemplate(latest ?? null);
+    } catch {
+      setInsertTemplate(null);
+    } finally {
+      setInsertTemplateLoading(false);
+    }
+  }
 
   const remove = useMutation({
     mutationFn: async () => {
@@ -925,9 +951,9 @@ function DocumentsPanel({
           />
           <QueryResultPanel result={queryResult} />
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" onClick={() => setShowInsert(true)}>
+            <Button size="sm" onClick={() => void openInsertDialog()} title="Insert a new document">
               <Plus className="h-3.5 w-3.5" />
-              Insert
+              Insert document
             </Button>
             <div className="relative">
               <Button
@@ -1446,22 +1472,17 @@ function DocumentsPanel({
         </div>
       </Dialog>
 
-      <Dialog open={showInsert} onClose={() => setShowInsert(false)} title="Insert document" className="max-w-xl">
-        <textarea
-          className="min-h-[200px] w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-input)] p-3 font-mono text-xs"
-          value={insertText}
-          onChange={(e) => setInsertText(e.target.value)}
-          spellCheck={false}
-        />
-        <div className="mt-3 flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => setShowInsert(false)}>
-            Cancel
-          </Button>
-          <Button onClick={() => insert.mutate()} disabled={insert.isPending}>
-            Insert
-          </Button>
-        </div>
-      </Dialog>
+      <InsertDocumentDialog
+        open={showInsert}
+        onClose={() => {
+          setShowInsert(false);
+          setInsertTemplate(null);
+        }}
+        templateDoc={insertTemplate}
+        templateLoading={insertTemplateLoading}
+        pending={insert.isPending}
+        onInsert={(document) => insert.mutate(document)}
+      />
 
       <Dialog open={!!convertPath} onClose={() => setConvertPath(null)} title="Convert field type">
         <p className="text-sm text-[var(--color-muted)]">

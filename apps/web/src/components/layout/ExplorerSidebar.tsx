@@ -45,6 +45,7 @@ export function ExplorerSidebar() {
   });
 
   const [filter, setFilter] = useState('');
+  /** Search query shared across connections / databases / collections */
   const q = filter.trim().toLowerCase();
   const [menu, setMenu] = useState<CtxMenu | null>(null);
 
@@ -56,11 +57,12 @@ export function ExplorerSidebar() {
   const [dropDb, setDropDb] = useState<{ cid: string; db: string } | null>(null);
   const [dropDbConfirm, setDropDbConfirm] = useState('');
 
-  const filtered = useMemo(() => {
-    const list = connections.data ?? [];
-    if (!q) return list;
-    return list.filter((c) => c.name.toLowerCase().includes(q));
-  }, [connections.data, q]);
+  // Sort connections A–Z; filtering of nested db/col happens per-node (needs live lists).
+  const sortedConnections = useMemo(() => {
+    const list = [...(connections.data ?? [])];
+    list.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    return list;
+  }, [connections.data]);
 
   useEffect(() => {
     if (!menu) return;
@@ -142,10 +144,16 @@ export function ExplorerSidebar() {
         </div>
         <input
           className="h-8 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-input)] px-2 text-xs outline-none focus:ring-1 focus:ring-[var(--color-ring)]"
-          placeholder="Filter connections…"
+          placeholder="Search connections, DBs, collections…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
+          aria-label="Search explorer"
         />
+        {q && (
+          <p className="text-[10px] text-[var(--color-muted-fg)]">
+            Filtering by “{filter.trim()}” · expands matches
+          </p>
+        )}
       </div>
 
       <div className="h-0 min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-2">
@@ -157,13 +165,14 @@ export function ExplorerSidebar() {
         {connections.isError && (
           <p className="px-2 py-2 text-xs text-red-300">Could not load connections</p>
         )}
-        {filtered.map((conn) => (
+        {sortedConnections.map((conn) => (
           <ConnectionNode
             key={conn.id}
             id={conn.id}
             name={conn.name}
             status={conn.status}
             activePath={location.pathname}
+            search={q}
             onDbContextMenu={(e, cid, db) => {
               e.preventDefault();
               e.stopPropagation();
@@ -480,11 +489,17 @@ function SideLink({
   );
 }
 
+function nameMatches(name: string, search: string): boolean {
+  if (!search) return true;
+  return name.toLowerCase().includes(search);
+}
+
 function ConnectionNode({
   id,
   name,
   status,
   activePath,
+  search,
   onDbContextMenu,
   onColContextMenu,
 }: {
@@ -492,15 +507,22 @@ function ConnectionNode({
   name: string;
   status: string;
   activePath: string;
+  search: string;
   onDbContextMenu: (e: ReactMouseEvent, cid: string, db: string) => void;
   onColContextMenu: (e: ReactMouseEvent, cid: string, db: string, col: string) => void;
 }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const openTab = useTabsStore((s) => s.openTab);
-  const [open, setOpen] = useState(() => activePath.startsWith(`/c/${id}`));
+  const connMatches = nameMatches(name, search);
+  const [open, setOpen] = useState(() => activePath.startsWith(`/c/${id}`) || !!search);
   const isConnected = status === 'connected';
   const isActiveConn = activePath === `/c/${id}` || activePath.startsWith(`/c/${id}/`);
+
+  // Auto-expand while searching so nested hits are visible
+  useEffect(() => {
+    if (search && isConnected) setOpen(true);
+  }, [search, isConnected]);
 
   const connect = useMutation({
     mutationFn: () => api.connect(id),
@@ -513,11 +535,24 @@ function ConnectionNode({
     onError: (e: Error) => toast.error(e instanceof ApiError ? e.message : e.message),
   });
 
+  // Fetch DBs when expanded, or when searching (so we can match db/col names)
   const dbs = useQuery({
     queryKey: ['dbs', id],
     queryFn: async () => (await api.listDatabases(id)).data,
-    enabled: open && isConnected,
+    enabled: isConnected && (open || !!search),
   });
+
+  const sortedDbs = useMemo(() => {
+    const list = [...(dbs.data ?? [])];
+    list.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    return list;
+  }, [dbs.data]);
+
+  // Hide connection when search doesn't match name and no nested data yet that might match
+  // (DatabaseNode returns null if no match — we still show parent if name matches or while loading)
+  if (search && !connMatches && !isConnected) {
+    return null;
+  }
 
   return (
     <div className="mb-0.5">
@@ -579,13 +614,15 @@ function ConnectionNode({
           {dbs.isError && (
             <p className="px-2 py-1 text-[11px] text-red-300">Failed to list databases</p>
           )}
-          {(dbs.data ?? []).map((db) => (
+          {sortedDbs.map((db) => (
             <DatabaseNode
               key={db.name}
               cid={id}
               connectionName={name}
               db={db.name}
               activePath={activePath}
+              search={search}
+              forceShow={connMatches}
               openTab={openTab}
               onDbContextMenu={onDbContextMenu}
               onColContextMenu={onColContextMenu}
@@ -605,6 +642,8 @@ function DatabaseNode({
   connectionName,
   db,
   activePath,
+  search,
+  forceShow,
   openTab,
   onDbContextMenu,
   onColContextMenu,
@@ -613,6 +652,9 @@ function DatabaseNode({
   connectionName: string;
   db: string;
   activePath: string;
+  search: string;
+  /** Parent connection name matched search — show all children */
+  forceShow: boolean;
   openTab: ReturnType<typeof useTabsStore.getState>['openTab'];
   onDbContextMenu: (e: ReactMouseEvent, cid: string, db: string) => void;
   onColContextMenu: (e: ReactMouseEvent, cid: string, db: string, col: string) => void;
@@ -620,18 +662,42 @@ function DatabaseNode({
   const navigate = useNavigate();
   const base = `/c/${cid}/db/${encodeURIComponent(db)}`;
   const isActive = activePath === base || activePath.startsWith(`${base}/`);
-  const [open, setOpen] = useState(() => isActive);
+  const dbMatches = nameMatches(db, search);
+  const [open, setOpen] = useState(() => isActive || (!!search && dbMatches));
 
-  // Keep expanded when navigating into this DB
+  // Keep expanded when navigating into this DB or when searching
   useEffect(() => {
     if (isActive) setOpen(true);
   }, [isActive]);
+  useEffect(() => {
+    if (search) setOpen(true);
+  }, [search]);
 
   const cols = useQuery({
     queryKey: ['cols', cid, db],
     queryFn: async () => (await api.listCollections(cid, db)).data,
-    enabled: open,
+    enabled: open || !!search,
   });
+
+  const sortedCols = useMemo(() => {
+    const list = [...(cols.data ?? [])];
+    list.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    return list;
+  }, [cols.data]);
+
+  const visibleCols = useMemo(() => {
+    if (!search || forceShow || dbMatches) return sortedCols;
+    return sortedCols.filter((c) => nameMatches(c.name, search));
+  }, [sortedCols, search, forceShow, dbMatches]);
+
+  // Hide this DB entirely if search doesn't match db name or any collection
+  if (search && !forceShow && !dbMatches) {
+    if (cols.isLoading || cols.isFetching) {
+      // still loading — show briefly so search can resolve
+    } else if (visibleCols.length === 0) {
+      return null;
+    }
+  }
 
   return (
     <div className="mb-0.5">
@@ -654,7 +720,9 @@ function DatabaseNode({
         <Database className="h-3.5 w-3.5 shrink-0 text-sky-400/80" />
         <span className="min-w-0 flex-1 truncate">{db}</span>
         {cols.data && (
-          <span className="shrink-0 text-[10px] text-[var(--color-muted-fg)]">{cols.data.length}</span>
+          <span className="shrink-0 text-[10px] text-[var(--color-muted-fg)]">
+            {search && !forceShow && !dbMatches ? visibleCols.length : cols.data.length}
+          </span>
         )}
       </button>
       {open && (
@@ -664,7 +732,7 @@ function DatabaseNode({
               <Loader2 className="h-3 w-3 animate-spin" /> Collections…
             </div>
           )}
-          {(cols.data ?? []).map((col) => {
+          {visibleCols.map((col) => {
             const path = `${base}/col/${encodeURIComponent(col.name)}`;
             const active = activePath === path;
             return (
@@ -702,6 +770,9 @@ function DatabaseNode({
             <p className="flex items-center gap-1 px-2 py-1 text-[11px] text-[var(--color-muted)]">
               <FolderOpen className="h-3 w-3" /> Empty · right-click DB to create
             </p>
+          )}
+          {cols.data && cols.data.length > 0 && visibleCols.length === 0 && search && (
+            <p className="px-2 py-1 text-[11px] text-[var(--color-muted-fg)]">No matching collections</p>
           )}
         </div>
       )}
