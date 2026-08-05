@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router-dom';
-import { ChevronRight, Database, PanelLeft, Table2 } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ChevronRight, Database, PanelLeft, Table2, Terminal } from 'lucide-react';
 import { api } from '@/lib/api';
+import { Button } from '@/components/ui/button';
 
 /**
  * Database overview — collections live in the explorer sidebar.
@@ -10,6 +11,7 @@ import { api } from '@/lib/api';
 export function DatabasePage() {
   const { cid = '', db: dbParam = '' } = useParams();
   const db = decodeURIComponent(dbParam);
+  const navigate = useNavigate();
 
   const cols = useQuery({
     queryKey: ['cols', cid, db],
@@ -46,6 +48,13 @@ export function DatabasePage() {
               : `${count} collection${count === 1 ? '' : 's'} in the explorer.`}
         </p>
 
+        <div className="mt-6">
+          <Button onClick={() => navigate(`/c/${cid}/shell?db=${encodeURIComponent(db)}`)}>
+            <Terminal className="h-4 w-4" />
+            Open script shell
+          </Button>
+        </div>
+
         <div className="mt-8 w-full max-w-md space-y-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] p-5 text-left text-sm text-[var(--color-muted)]">
           <p className="flex items-start gap-2">
             <PanelLeft className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-accent)]" />
@@ -59,6 +68,14 @@ export function DatabasePage() {
             <span>
               <strong className="text-[var(--color-foreground)]">Right-click</strong> a database or
               collection for New collection, Dump, Drop, and more.
+            </span>
+          </p>
+          <p className="flex items-start gap-2">
+            <Terminal className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-accent)]" />
+            <span>
+              Multi-statement scripts (find, indexes, variables) run in the{' '}
+              <strong className="text-[var(--color-foreground)]">script shell</strong> — not the
+              collection query box (that only runs collection find/update templates).
             </span>
           </p>
         </div>

@@ -121,6 +121,13 @@ export const PreviewBodySchema = z.object({
   maxTimeMS: z.number().int().min(1).max(300_000).optional(),
 });
 
+/** Multi-statement mongosh-like script against a database. */
+export const ShellScriptBodySchema = z.object({
+  script: z.string().min(1).max(500_000),
+  maxTimeMS: z.number().int().min(1).max(300_000).optional(),
+  maxDocs: z.number().int().min(1).max(5_000).optional(),
+});
+
 export const UpdateByFilterBodySchema = z.object({
   filter: z.unknown(),
   update: z.unknown(),

@@ -118,6 +118,28 @@ export const api = {
       { method: 'DELETE', body: JSON.stringify({ confirmName: name }) },
     ),
 
+  /** Multi-statement mongosh-like script against a database. */
+  runScript: (
+    cid: string,
+    db: string,
+    body: { script: string; maxTimeMS?: number; maxDocs?: number },
+  ) =>
+    request<{
+      data: {
+        results: {
+          index: number;
+          statement: string;
+          value?: unknown;
+          error?: string;
+          hasValue: boolean;
+        }[];
+        executionMs: number;
+      };
+    }>(`/api/v1/c/${cid}/db/${encodeURIComponent(db)}/script`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
   find: (
     cid: string,
     db: string,

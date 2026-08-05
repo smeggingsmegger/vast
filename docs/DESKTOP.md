@@ -9,6 +9,7 @@ Vast ships a **Tauri 2** shell under `apps/desktop`. The web UI is bundled into 
 | **Node 22+** / **pnpm 11+** | Monorepo |
 | **Rust** (stable) | [rustup.rs](https://rustup.rs) |
 | **Platform deps** | See below |
+| **Apple signing (optional)** | Dev: ad-hoc via `desktop:build`. Ship: `pnpm desktop:release:macos` — see [SIGNING.md](./SIGNING.md) |
 
 ### macOS
 

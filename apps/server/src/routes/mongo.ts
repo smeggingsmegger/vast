@@ -20,6 +20,7 @@ import {
   ReplaceBodySchema,
   RestoreBodySchema,
   SchemaAnalyzeBodySchema,
+  ShellScriptBodySchema,
   UpdateByFilterBodySchema,
   VastError,
 } from '@vast/shared';
@@ -39,6 +40,7 @@ import {
   importJsonArray,
   importJsonl,
   restoreDatabase,
+  runShellScript,
 } from '@vast/mongo-core';
 import { Readable } from 'node:stream';
 import { join } from 'node:path';
@@ -148,6 +150,30 @@ export function mongoRoutes(ctx: AppContext) {
     const db = new DatabaseService(client).db(c.req.param('db'));
     const data = await new CollectionService(db).stats(c.req.param('col'));
     return c.json({ data });
+  });
+
+  /**
+   * Multi-statement mongosh-like script against a database.
+   * Sandboxed: exposes `db` collection proxy + helpers only (no Node/fs).
+   */
+  r.post('/c/:cid/db/:db/script', async (c) => {
+    const cid = c.req.param('cid');
+    const body = ShellScriptBodySchema.parse(await c.req.json());
+    const managed = requireConn(ctx, cid);
+    const database = managed.client.db(c.req.param('db'));
+    const readOnly = managed.readOnly || ctx.config.readOnly;
+    try {
+      const data = await runShellScript(database, body.script, {
+        maxTimeMS: body.maxTimeMS,
+        maxDocs: body.maxDocs,
+        readOnly,
+      });
+      return c.json({ data });
+    } catch (err) {
+      if (err instanceof VastError) throw err;
+      const message = err instanceof Error ? err.message : 'Script failed';
+      throw new VastError(ErrorCode.VALIDATION, message);
+    }
   });
 
   // Documents

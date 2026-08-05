@@ -9,6 +9,7 @@ import {
   Loader2,
   Plus,
   Server,
+  Terminal,
   Trash2,
 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
@@ -130,6 +131,14 @@ export function ConnectionPage() {
               Connect
             </Button>
           )}
+          <Button
+            variant="secondary"
+            disabled={!isConnected}
+            onClick={() => navigate(`/c/${cid}/shell`)}
+          >
+            <Terminal className="h-4 w-4" />
+            Script shell
+          </Button>
           <Button variant="secondary" onClick={() => setShowNewDb(true)} disabled={!isConnected}>
             <Plus className="h-4 w-4" />
             New database

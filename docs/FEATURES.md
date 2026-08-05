@@ -73,3 +73,5 @@
 - [x] Unit + real-Mongo integration + Playwright E2E
 - [x] Real SSH tunnel integration tests (when bastion available)
 - [x] **Fixture-driven Mongo scenarios** (≥300 cases) via HTTP API + driver integrity (`pnpm test:scenarios`)
+- [x] **Script shell** — multi-statement mongosh-style scripts per database (JSON / table / raw results)
+- [x] **macOS signing docs** — Developer ID + notarization via env (`docs/SIGNING.md`)

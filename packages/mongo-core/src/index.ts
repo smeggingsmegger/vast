@@ -14,3 +14,4 @@ export * from './import-export.js';
 export * from './dump-restore.js';
 export * from './admin-service.js';
 export * from './ssh-tunnel.js';
+export * from './shell-script.js';

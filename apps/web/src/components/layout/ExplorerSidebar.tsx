@@ -20,6 +20,7 @@ import {
   RefreshCw,
   Settings,
   Table2,
+  Terminal,
   Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -31,6 +32,7 @@ import { Input } from '@/components/ui/input';
 import { Dialog } from '@/components/ui/dialog';
 
 type CtxMenu =
+  | { kind: 'conn'; x: number; y: number; cid: string; name: string }
   | { kind: 'db'; x: number; y: number; cid: string; db: string }
   | { kind: 'col'; x: number; y: number; cid: string; db: string; col: string };
 
@@ -173,6 +175,11 @@ export function ExplorerSidebar() {
             status={conn.status}
             activePath={location.pathname}
             search={q}
+            onConnContextMenu={(e, cid, name) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setMenu({ kind: 'conn', x: e.clientX, y: e.clientY, cid, name });
+            }}
             onDbContextMenu={(e, cid, db) => {
               e.preventDefault();
               e.stopPropagation();
@@ -226,9 +233,34 @@ export function ExplorerSidebar() {
               top: Math.min(menu.y, window.innerHeight - 220),
             }}
           >
+            {menu.kind === 'conn' && (
+              <>
+                <MenuHeader>{menu.name}</MenuHeader>
+                <MenuItem
+                  icon={<Terminal className="h-3.5 w-3.5" />}
+                  onClick={() => {
+                    navigate(`/c/${menu.cid}/shell`);
+                    setMenu(null);
+                  }}
+                >
+                  Script shell…
+                </MenuItem>
+              </>
+            )}
             {menu.kind === 'db' && (
               <>
                 <MenuHeader>{menu.db}</MenuHeader>
+                <MenuItem
+                  icon={<Terminal className="h-3.5 w-3.5" />}
+                  onClick={() => {
+                    navigate(
+                      `/c/${menu.cid}/shell?db=${encodeURIComponent(menu.db)}`,
+                    );
+                    setMenu(null);
+                  }}
+                >
+                  Script shell…
+                </MenuItem>
                 <MenuItem
                   icon={<Plus className="h-3.5 w-3.5" />}
                   onClick={() => {
@@ -500,6 +532,7 @@ function ConnectionNode({
   status,
   activePath,
   search,
+  onConnContextMenu,
   onDbContextMenu,
   onColContextMenu,
 }: {
@@ -508,6 +541,7 @@ function ConnectionNode({
   status: string;
   activePath: string;
   search: string;
+  onConnContextMenu: (e: ReactMouseEvent, cid: string, name: string) => void;
   onDbContextMenu: (e: ReactMouseEvent, cid: string, db: string) => void;
   onColContextMenu: (e: ReactMouseEvent, cid: string, db: string, col: string) => void;
 }) {
@@ -573,7 +607,12 @@ function ConnectionNode({
             setOpen((v) => !v);
           }}
           onDoubleClick={() => navigate(`/c/${id}`)}
-          title={isConnected ? 'Click to expand · double-click to open' : 'Click to connect'}
+          onContextMenu={(e) => onConnContextMenu(e, id, name)}
+          title={
+            isConnected
+              ? 'Click to expand · right-click for shell · double-click to open'
+              : 'Click to connect'
+          }
         >
           {open && isConnected ? (
             <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[var(--color-muted-fg)]" />

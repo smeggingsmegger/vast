@@ -16,6 +16,12 @@
 # Important: Tauri does NOT cross-compile installers well. Build on each OS
 # (or use GitHub Actions matrix — see .github/workflows/desktop.yml).
 set -euo pipefail
+
+# Prefer Apple system tools over Conda/Miniforge shims (Python `xattr` breaks Tauri).
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  export PATH="/usr/bin:/bin:/usr/sbin:/sbin:${PATH}"
+fi
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
@@ -49,6 +55,44 @@ command -v pnpm >/dev/null || {
 OS="$(uname -s)"
 echo "==> Platform: $OS $(uname -m)"
 echo "==> Rust:     $(rustc --version)"
+
+if [[ "$OS" == "Darwin" ]]; then
+  # Auto-pick a unique Developer ID Application identity (same idea as taffy-local)
+  # when the caller did not set APPLE_SIGNING_IDENTITY.
+  if [[ -z "${APPLE_SIGNING_IDENTITY:-}" && -z "${APPLE_CERTIFICATE:-}" ]]; then
+    _vast_dev_ids="$(security find-identity -v -p codesigning 2>&1 | awk '
+      match($0, /"Developer ID Application:[^"]+"/) {
+        print substr($0, RSTART + 1, RLENGTH - 2)
+      }
+    ' || true)"
+    _vast_id_count=0
+    _vast_id_pick=""
+    while IFS= read -r _cand; do
+      [[ -n "${_cand}" ]] || continue
+      _vast_id_count=$((_vast_id_count + 1))
+      _vast_id_pick="${_cand}"
+    done <<< "${_vast_dev_ids}"
+    if [[ "${_vast_id_count}" -eq 1 ]]; then
+      export APPLE_SIGNING_IDENTITY="${_vast_id_pick}"
+      echo "==> Apple signing: auto-selected Developer ID Application"
+      echo "    identity: ${APPLE_SIGNING_IDENTITY}"
+    elif [[ "${_vast_id_count}" -gt 1 ]]; then
+      echo "==> Apple signing: multiple Developer ID identities — set APPLE_SIGNING_IDENTITY"
+      while IFS= read -r _cand; do
+        [[ -n "${_cand}" ]] && echo "    - ${_cand}"
+      done <<< "${_vast_dev_ids}"
+    fi
+  fi
+
+  if [[ -n "${APPLE_SIGNING_IDENTITY:-}" || -n "${APPLE_CERTIFICATE:-}" ]]; then
+    echo "==> Apple signing: enabled"
+    echo "    identity: ${APPLE_SIGNING_IDENTITY:-'(from APPLE_CERTIFICATE)'}"
+    echo "    notarization: use pnpm desktop:release:macos (Keychain profile taffy-notary)"
+  else
+    echo "==> Apple signing: ad-hoc only"
+    echo "    Ship builds: pnpm desktop:release:macos (Developer ID + notary profile — docs/SIGNING.md)"
+  fi
+fi
 
 clean_dmg_leftovers() {
   echo "==> Cleaning leftover DMG mounts (if any)"
